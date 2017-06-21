@@ -15,12 +15,13 @@
  *------------------------------------------------------------------
  */
 
-#include <stdio.h>
+#ifndef _SOCKET_TEST_H_
+#define _SOCKET_TEST_H_
 
-#include <libmemif.h>
+#include <unit_test.h>
+#include <memif_private.h>
+#include <socket.h>
 
-int main ()
-{
-	printf ("foo is nowhere to be found...");
-}
+int test_socket (uint16_t *success, uint16_t *fail);
 
+#endif /* _SOCKET_TEST_H_ */

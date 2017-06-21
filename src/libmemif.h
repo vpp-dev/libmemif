@@ -18,6 +18,40 @@
 #ifndef _LIBMEMIF_H_
 #define _LIBMEMIF_H_
 
-int foo (int x);
+#include <inttypes.h>
+
+#include <memif.h>
+
+typedef void* memif_conn_handle_t;
+
+typedef struct
+{
+    uint8_t *socket_filename;
+    uint8_t secret[24];
+
+    uint8_t num_s2m_rings;
+    uint8_t num_m2s_rings;
+    uint16_t buffer_size;
+    uint16_t log2_ring_size;
+    uint8_t is_master;
+
+    uint32_t interface_id;
+    uint8_t interface_name[32];
+    uint8_t instance_name[32];
+    memif_interface_mode_t  mode:8;
+} memif_conn_args_t;
+
+/* initialize memif connection. connect socket */
+int memif_connect (memif_conn_handle_t *conn, memif_conn_args_t * args);
+
+/* returns file descriptor for control channel. user can register fd for polling */
+/* on event user calls memif_control_handler () */
+int memif_get_control_fd (memif_conn_handle_t conn);
+
+/* handles control channel events (connect/disconnect) */
+int memif_control_fd_handler (memif_conn_handle_t conn, int fd);
+
+/* disconnect session (free memory, close file descriptors, unmap shared memory) */
+int memif_disconnect (memif_conn_handle_t conn);
 
 #endif /* _LIBMEMIF_H_ */

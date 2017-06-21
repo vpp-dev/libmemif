@@ -17,12 +17,35 @@
 
 #include <stdint.h>
 
-#include "memif.h"
-#include "libmemif.h"
+/* memif protocol msg, ring and descriptor definitions */
+#include <memif.h>
+/* memif api */
+#include <libmemif.h>
+/* socket messaging functions */
+#include <socket.h>
+/* private structs and functions */
+#include <memif_private.h>
 
-
-int foo (int x)
+int
+memif_connect (memif_conn_handle_t *conn, memif_conn_args_t *args)
 {
-	return x + 1;
+    return 0;
 }
 
+int
+memif_get_control_fd (memif_conn_handle_t conn)
+{
+    return 0;
+}
+
+int
+memif_control_fd_handler (memif_conn_handle_t conn, int fd)
+{
+    return 0;
+}
+
+int
+memif_disconnect (memif_conn_handle_t conn)
+{
+    return 0;
+}
