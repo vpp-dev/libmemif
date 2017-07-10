@@ -159,6 +159,46 @@ memif_msg_enq_add_region (memif_connection_t *c, uint8_t region_index)
     return 0;
 }
 
+/* send information about ring specified by direction (S2M | M2S) and index */
+static_fn int
+memif_msg_enq_add_ring (memif_connection_t *c, uint8_t index, uint8_t dir)
+{
+    memif_msg_queue_elt_t *e =
+        (memif_msg_queue_elt_t *) malloc (sizeof (memif_msg_queue_elt_t));
+
+    memif_msg_add_ring_t *ar = &e->msg.add_ring;
+
+    e->msg.type = MEMIF_MSG_TYPE_ADD_RING;
+
+    /* TODO: support multiple rings */
+    memif_queue_t *mq;
+    if (dir == MEMIF_RING_M2S)
+        mq = c->rx_queues;
+    else
+        mq = c->tx_queues;
+
+    e->fd = mq->int_fd;
+    ar->index = index;
+    ar->offset = mq->offset;
+    ar->log2_ring_size = mq->log2_ring_size;
+    ar->flags = (dir == MEMIF_RING_S2M) ? MEMIF_MSG_ADD_RING_FLAG_S2M : 0;
+
+    e->next = NULL;
+    if (c->msg_queue == NULL)
+    {
+        c->msg_queue = e;
+        return 0;
+    }
+
+    memif_msg_queue_elt_t *cur = c->msg_queue;
+    while (cur->next != NULL)
+    {
+        cur = cur->next;
+    }
+    cur->next = e;
+    return 0;
+}
+
 static_fn int
 memif_msg_receive_hello (memif_connection_t *c, memif_msg_t *msg)
 {
@@ -281,6 +321,70 @@ memif_msg_receive_add_region (memif_connection_t *c, memif_msg_t *msg, int fd)
 
     /* TODO: support multiple regions */
     c->regions = mr;
+
+    return 0;
+}
+
+/* receive ring information and add new ring to connection queue
+   (based on direction S2M | M2S) */
+static_fn int
+memif_msg_receive_add_ring (memif_connection_t *c, memif_msg_t *msg, int fd)
+{
+    memif_msg_add_ring_t *ar = &msg->add_ring;
+
+    memif_queue_t *mq;
+
+    if (fd < 0)
+        error_return ("missing ring interrupt fd");
+
+    if (ar->flags & MEMIF_MSG_ADD_RING_FLAG_S2M)
+    {
+        if (ar->index > MEMIF_MAX_S2M_RING)
+            error_return ("maximum ring limit reached");
+
+        mq = (memif_queue_t *) malloc (sizeof (memif_queue_t));
+        mq->int_fd = fd;
+        mq->log2_ring_size = ar->log2_ring_size;
+        mq->region = ar->region;
+        mq->offset = ar->offset;
+
+        /* TODO: support multiple rings */
+        c->rx_queues = mq;
+        c->args.num_s2m_rings++;
+    }
+    else
+    {
+        if (ar->index > MEMIF_MAX_M2S_RING)
+            error_return ("maximum ring limit reached");
+
+        mq = (memif_queue_t *) malloc (sizeof (memif_queue_t));
+        mq->int_fd = fd;
+        mq->log2_ring_size = ar->log2_ring_size;
+        mq->region = ar->region;
+        mq->offset = ar->offset;
+
+        /* TODO: support multiple rings */
+        c->tx_queues = mq;
+        c->args.num_m2s_rings++;
+    }
+
+    return 0;
+}
+
+/* slave -> master */
+static_fn int
+memif_msg_receive_connect (memif_connection_t *c, memif_msg_t *msg)
+{
+    memif_msg_connect_t *cm = &msg->connect;
+
+    int err = 0;
+    err = memif_connect1 (c);
+    if (err < 0)
+        return err;
+
+    strncpy ((char *) c->remote_name, (char *) cm->if_name, strlen ((char *) cm->if_name));
+
+    c->on_connect ((void *) c, c->private_ctx);
 
     return 0;
 }

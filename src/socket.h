@@ -56,12 +56,15 @@ void memif_msg_enq_init (memif_connection_t *c);
 
 int memif_msg_enq_add_region (memif_connection_t *c, uint8_t region);
 
+int memif_msg_enq_add_ring (memif_connection_t *c, uint8_t index, uint8_t dir);
+
 int memif_msg_receive_hello (memif_connection_t *c, memif_msg_t *msg);
 
 int memif_msg_receive_init (memif_connection_t *c, memif_msg_t *msg);
 
 int memif_msg_receive_add_region (memif_connection_t *c, memif_msg_t *msg, int fd);
 
+int memif_msg_receive_add_ring (memif_connection_t *c, memif_msg_t *msg, int fd);
 
 #else
 #define static_fn static
