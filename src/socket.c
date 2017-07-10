@@ -39,8 +39,33 @@
 static_fn int
 memif_msg_send (int fd, memif_msg_t *msg, int afd)
 {
+    struct msghdr mh = { 0 };
+    struct iovec iov[1];
+    char ctl[CMSG_SPACE (sizeof (int))];
+    int rv;
 
-    return 0;
+    iov[0].iov_base = (void *) msg;
+    iov[0].iov_len = sizeof (memif_msg_t);
+    mh.msg_iov = iov;
+    mh.msg_iovlen = 1;
+
+    if (afd > 0)
+    {
+        struct cmsghdr *cmsg;
+        memset (&ctl, 0, sizeof (ctl));
+        mh.msg_control = ctl;
+        mh.msg_controllen = sizeof (ctl);
+        cmsg = CMSG_FIRSTHDR (&mh);
+        cmsg->cmsg_len = CMSG_LEN (sizeof (int));
+        cmsg->cmsg_level = SOL_SOCKET;
+        cmsg->cmsg_type = SCM_RIGHTS;
+        memcpy (CMSG_DATA (cmsg), &afd, sizeof (int));
+    }
+    rv = sendmsg (fd, &mh, 0);
+    if (rv < 0)
+        error_return ("sendmsg: %s fd %d", strerror (errno), fd);
+    DBG ("Message type %u sent", msg->type);
+    return rv;
 }
 
 /* response from memif master - master is ready to handle next message */
@@ -504,6 +529,117 @@ memif_msg_receive_disconnect (memif_connection_t *c, memif_msg_t *msg)
 static_fn int
 memif_msg_receive (memif_connection_t *c)
 {
+    char ctl[CMSG_SPACE (sizeof (int)) +
+             CMSG_SPACE (sizeof (struct ucred))] = { 0 };
+    struct msghdr mh = { 0 };
+    struct iovec iov[1];
+    memif_msg_t msg = { 0 };
+    ssize_t size;
+    int err = 0;
+    int fd = -1;
+    int i = 0;
+    
+    iov[0].iov_base = (void *) &msg;
+    iov[0].iov_len = sizeof (memif_msg_t);
+    mh.msg_iov = iov;
+    mh.msg_iovlen = 1;
+    mh.msg_control = ctl;
+    mh.msg_controllen = sizeof (ctl);
+
+    size = recvmsg (c->fd, &mh, 0);
+    if (size != sizeof (memif_msg_t))
+    {
+        if (size == 0)
+            error_return ("disconnected");
+        else
+            error_return ("malformed message received on fd %d", c->fd);
+    }
+
+    struct ucred *cr = 0;
+    struct cmsghdr *cmsg;
+
+      cmsg = CMSG_FIRSTHDR (&mh);
+      while (cmsg)
+        {
+          if (cmsg->cmsg_level == SOL_SOCKET)
+        {
+          if (cmsg->cmsg_type == SCM_CREDENTIALS)
+            {
+              cr = (struct ucred *) CMSG_DATA (cmsg);
+            }
+          else if (cmsg->cmsg_type == SCM_RIGHTS)
+            {
+              int *fdp = (int *) CMSG_DATA (cmsg);
+              fd = *fdp;
+            }
+        }
+          cmsg = CMSG_NXTHDR (&mh, cmsg);
+        }
+
+    DBG ("Message type %u received", msg.type);
+
+    switch (msg.type)
+    {
+        case MEMIF_MSG_TYPE_ACK:
+            break;
+
+        case MEMIF_MSG_TYPE_HELLO:
+            if ((err = memif_msg_receive_hello (c, &msg)) < 0)
+                return err;
+            if ((err = memif_init_regions_and_queues (c)) < 0)
+                return err;
+            memif_msg_enq_init (c);
+            memif_msg_enq_add_region (c, 0);
+            /* TODO: support multiple rings */
+            memif_msg_enq_add_ring (c, i, MEMIF_RING_S2M);
+            memif_msg_enq_add_ring (c, i, MEMIF_RING_M2S);
+            memif_msg_enq_connect (c);
+            break;
+
+        case MEMIF_MSG_TYPE_INIT:
+            if ((err = memif_msg_receive_init (c, &msg)) < 0)
+                return err;
+            /* c->remote_pid = cr->pid */
+            /* c->remote_uid = cr->uid */
+            /* c->remote_gid = cr->gid */
+            memif_msg_enq_ack (c);
+            break;
+
+        case MEMIF_MSG_TYPE_ADD_REGION:
+            if ((err = memif_msg_receive_add_region (c, &msg, fd)) < 0)
+                return err;
+            memif_msg_enq_ack (c);
+            break;
+
+        case MEMIF_MSG_TYPE_ADD_RING:
+            if ((err = memif_msg_receive_add_ring (c, &msg, fd)) < 0)
+                return err;
+            memif_msg_enq_ack (c);
+            break;
+
+        case MEMIF_MSG_TYPE_CONNECT:
+            if ((err = memif_msg_receive_connect (c, &msg)) < 0)
+                return err;
+            memif_msg_enq_connected (c);
+            break;
+
+        case MEMIF_MSG_TYPE_CONNECTED:
+            if ((err = memif_msg_receive_connected (c, &msg)) < 0)
+                return err;
+            break;
+
+        case MEMIF_MSG_TYPE_DISCONNECT:
+            if ((err = memif_msg_receive_disconnect (c, &msg)) < 0)
+                return err;
+            break;
+
+        default:
+            error_return ("unknown message type (0x%x)", msg.type);
+            break;
+    }
+
+    /* can send msg */
+    c->flags |= MEMIF_CONNECTION_FLAG_WRITE;
     return 0;
 }
 
