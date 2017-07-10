@@ -123,6 +123,42 @@ memif_msg_enq_init (memif_connection_t *c)
     cur->next = e;
 }
 
+/* send information about region specified by region_index */
+static_fn int
+memif_msg_enq_add_region (memif_connection_t *c, uint8_t region_index)
+{
+    if (c->regions == NULL)
+        error_return ("no regions initialized");
+
+    /* TODO: support multiple regions */
+    memif_region_t *mr = c->regions;
+
+    memif_msg_queue_elt_t *e =
+        (memif_msg_queue_elt_t *) malloc (sizeof (memif_msg_queue_elt_t));
+
+    memif_msg_add_region_t *ar = &e->msg.add_region;
+
+    e->msg.type = MEMIF_MSG_TYPE_ADD_REGION;
+    e->fd = mr->fd;
+    ar->index = region_index;
+    ar->size = mr->region_size;
+
+    e->next = NULL;
+    if (c->msg_queue == NULL)
+    {
+        c->msg_queue = e;
+        return 0;
+    }
+
+    memif_msg_queue_elt_t *cur = c->msg_queue;
+    while (cur->next != NULL)
+    {
+        cur = cur->next;
+    }
+    cur->next = e;
+    return 0;
+}
+
 static_fn int
 memif_msg_receive_hello (memif_connection_t *c, memif_msg_t *msg)
 {
@@ -224,6 +260,29 @@ memif_msg_receive_init (memif_connection_t *c, memif_msg_t *msg)
 error:
     memif_msg_send_disconnect (c, err_string, 1);
     return -1;
+}
+
+/* receive region information and add new region to connection (if possible) */
+static_fn int
+memif_msg_receive_add_region (memif_connection_t *c, memif_msg_t *msg, int fd)
+{
+    memif_msg_add_region_t *ar = &msg->add_region;
+    memif_region_t *mr;
+    if (fd < 0)
+        error_return ("missing memory region fd");
+
+    if (ar->index > MEMIF_MAX_REGION)
+        error_return ("maximum region limit reached");
+
+    mr = (memif_region_t *) malloc (sizeof (memif_region_t ));
+    mr->fd = fd;
+    mr->region_size = ar->size;
+    mr->shm = NULL;
+
+    /* TODO: support multiple regions */
+    c->regions = mr;
+
+    return 0;
 }
 
 static_fn int
