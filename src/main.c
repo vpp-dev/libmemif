@@ -63,6 +63,8 @@ typedef struct
 /*
  * WIP
  */ 
+/* probably function like memif_cleanup () will need to be called
+    close timerfd, free struct libmemif_main and its nested structures */
 typedef struct
 {
     memif_control_fd_update_t *control_fd_update;
@@ -376,22 +378,6 @@ memif_control_fd_handler (int fd, uint8_t events)
     return 0;
 }
 
-/* TODO: support multiple regions */
-static void
-memif_region_munmap_free (memif_region_t **mr)
-{
-    if (*mr == NULL)
-        return;
-    if (munmap ((*mr)->shm, (*mr)->region_size) < 0)
-        DBG ("munmap: %s", strerror (errno));
-    if ((*mr)->fd > 0)
-        close ((*mr)->fd);
-    (*mr)->fd = -1;
-    free (*mr);
-    *mr = NULL;
-    return;
-}
-
 static void
 memif_msg_queue_free (memif_msg_queue_elt_t **e)
 {
@@ -418,7 +404,10 @@ memif_disconnect_internal (memif_connection_t *c)
     memif_msg_send_disconnect (c, c->remote_disconnect_string, 1);
 
     if (c->fd > 0)
+    {
+        lm->control_fd_update (c->fd, MEMIF_FD_EVENT_DEL);
         close (c->fd);
+    }
     c->fd = -1;
 
     /* TODO: support multiple rings */
@@ -433,7 +422,17 @@ memif_disconnect_internal (memif_connection_t *c)
         c->rx_queues = NULL;
     }
 
-    memif_region_munmap_free (&c->regions);
+    /* TODO: support multiple regions */
+    if (c->regions != NULL)
+    {
+        if (munmap (c->regions->shm, c->regions->region_size) < 0)
+            DBG ("munmap: %s", strerror (errno));
+        if (c->regions->fd > 0)
+            close (c->regions->fd);
+        c->regions->fd = -1;
+        free (c->regions);
+        c->regions = NULL;
+    }
 
     memif_msg_queue_free (&c->msg_queue);
 
