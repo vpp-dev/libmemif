@@ -47,16 +47,16 @@
 
 #if MEMIF_DEBUG == 1
 #define DBG(...) do {                                                             \
-                        printf("MEMIF_DEBUG: %s:%d: ", __func__, __LINE__);               \
+                        printf("MEMIF_DEBUG:%s:%s:%d: ", __FILE__, __func__, __LINE__);  \
                         printf(__VA_ARGS__);                                            \
                         printf("\n");                                                   \
                         } while (0)
 
 #define DBG_UNIX(...) do {                                                        \
-                                printf("MEMIF_DEBUG_UNIX: %s:%d: ", __func__, __LINE__);  \
-                                printf(__VA_ARGS__);                                    \
-                                printf("\n");                                           \
-                            } while (0)
+                      printf("MEMIF_DEBUG_UNIX:%s:%s:%d: ", __FILE__, __func__, __LINE__);  \
+                      printf(__VA_ARGS__);                                    \
+                      printf("\n");                                           \
+                      } while (0)
 
 #else
 #define DBG(...)
@@ -116,16 +116,23 @@ typedef struct memif_connection
 
     memif_fn *write_fn, *read_fn, *error_fn;
 
+    memif_connection_update_t *on_connect, *on_disconnect;
+    void *private_ctx;
+
     /* connection message queue */
     memif_msg_queue_elt_t *msg_queue;
 
     uint8_t remote_if_name[32];
     uint8_t remote_name[32];
+    uint8_t remote_disconnect_string[96];
 
     memif_region_t *regions;
 
     memif_queue_t *rx_queues;
     memif_queue_t *tx_queues;
+
+    uint16_t flags;
+#define MEMIF_CONNECTION_FLAG_WRITE (1 << 0)
 } memif_connection_t;
 
 /* main.c */
@@ -135,6 +142,8 @@ int memif_connect1 (memif_connection_t *c);
 
 /* memory map region, initalize rings and queues */
 int memif_init_regions_and_queues (memif_connection_t *c);
+
+int memif_disconnect_internal (memif_connection_t *c);
 
 #ifndef __NR_memfd_create
 #if defined __x86_64__

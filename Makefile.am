@@ -18,7 +18,11 @@ ACLOCAL_AMFLAGS = -I m4
 #
 # unit_test
 #
-unit_test_SOURCES = test/socket_test.c test/unit_test.c src/socket.c
+unit_test_SOURCES = test/socket_test.c      \
+                    test/main_test.c        \
+                    test/unit_test.c        \
+                    src/socket.c            \
+                    src/main.c
 # macro MEMIF_UNIT_TEST -> compile functions without static keyword
 # and declare them in header files, so they can be called from unit tests
 unit_test_CPPFLAGS = $(AM_CPPFLAGS) -Itest -Isrc -DMEMIF_UNIT_TEST
@@ -27,14 +31,14 @@ unit_test_CPPFLAGS = $(AM_CPPFLAGS) -Itest -Isrc -DMEMIF_UNIT_TEST
 # main lib
 #
 libmemif_la_SOURCES = src/main.c src/socket.c
-libmemif_la_CPPFLAGS = $(AM_CPPFLAGS) -Isrc
+libmemif_la_CPPFLAGS = $(AM_CPPFLAGS) -Isrc -ggdb
 
 #
 # ICMP responder example
 #
 icmp_responder_SOURCES = examples/icmp_responder/main.c
 icmp_responder_LDADD = libmemif.la
-icmp_responder_CPPFLAGS = $(AM_CPPFLAGS) -Isrc
+icmp_responder_CPPFLAGS = $(AM_CPPFLAGS) -Isrc -ggdb
 
 noinst_PROGRAMS = icmp_responder
 
