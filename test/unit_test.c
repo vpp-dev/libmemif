@@ -17,10 +17,13 @@
 
 #include <socket_test.h>
 
+
 int
 main (void)
 {
     uint16_t s = 0, f = 0;
+
+/*    test_main (&s, &f);*/
 
     test_socket (&s, &f);
 

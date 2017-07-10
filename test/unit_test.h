@@ -53,6 +53,12 @@
                         printf ("\n");                                          \
                     } while (0)
 
+#define UNIX_ERROR(...) do {                                                         \
+                        printf (RED"UNIX ERROR:"DEFAULT"%s:%d: ",__func__, __LINE__);\
+                        printf (__VA_ARGS__);                                   \
+                        printf ("\n");                                          \
+                    } while (0)
+
 #define TEST_APP_NAME "unit_test_app"
 #define TEST_IF_NAME  "unit_test_if"
 #define TEST_SECRET   "psst"
