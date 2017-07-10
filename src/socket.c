@@ -39,6 +39,7 @@
 static_fn int
 memif_msg_send (int fd, memif_msg_t *msg, int afd)
 {
+
     return 0;
 }
 
@@ -197,6 +198,86 @@ memif_msg_enq_add_ring (memif_connection_t *c, uint8_t index, uint8_t dir)
     }
     cur->next = e;
     return 0;
+}
+
+/* used as connection request from slave */
+static_fn void
+memif_msg_enq_connect (memif_connection_t *c)
+{
+    memif_msg_queue_elt_t *e =
+        (memif_msg_queue_elt_t *) malloc (sizeof (memif_msg_queue_elt_t));
+    memif_msg_connect_t *cm = &e->msg.connect;
+
+    e->msg.type = MEMIF_MSG_TYPE_CONNECT;
+    e->fd = -1;
+    strncpy ((char *) cm->if_name, (char *) c->args.interface_name,
+            strlen ((char *) c->args.interface_name));
+
+    e->next = NULL;
+    if (c->msg_queue == NULL)
+    {
+        c->msg_queue = e;
+        return;
+    }
+
+    memif_msg_queue_elt_t *cur = c->msg_queue;
+    while (cur->next != NULL)
+    {
+        cur = cur->next;
+    }
+    cur->next = e;
+    return;
+}
+
+/* used as confirmation of connection by master */
+static_fn void
+memif_msg_enq_connected (memif_connection_t *c)
+{
+    memif_msg_queue_elt_t *e =
+        (memif_msg_queue_elt_t *) malloc (sizeof (memif_msg_queue_elt_t));
+    memif_msg_connected_t *cm = &e->msg.connected;
+    
+    e->msg.type = MEMIF_MSG_TYPE_CONNECTED;
+    e->fd = -1;
+    strncpy ((char *) cm->if_name, (char *) c->args.interface_name,
+            strlen ((char *) c->args.interface_name));
+
+    e->next = NULL;
+    if (c->msg_queue == NULL)
+    {
+        c->msg_queue = e;
+        return;
+    }
+
+    memif_msg_queue_elt_t *cur = c->msg_queue;
+    while (cur->next != NULL)
+    {
+        cur = cur->next;
+    }
+    cur->next = e;
+    return;
+}
+
+/* immediately send disconnect msg */
+    /* specifie protocol for disconnect msg err_code
+       so that it will be compatible with VPP? (header/doc) */
+int
+memif_msg_send_disconnect (memif_connection_t *c, uint8_t *err_string, uint32_t err_code)
+{
+    memif_msg_t msg = { 0 };
+    memif_msg_disconnect_t *d = &msg.disconnect;
+
+    msg.type = MEMIF_MSG_TYPE_DISCONNECT;
+    d->code = err_code;
+    uint16_t l = strlen ((char *) err_string);
+    if (l > 96)
+    {
+        DBG ("Disconnect string too long. Sending first 96 characters.");
+        l = 96;
+    }
+    strncpy ((char *) d->string,  (char *) err_string, l);
+
+    return memif_msg_send (c->fd, &msg, -1);
 }
 
 static_fn int
@@ -387,6 +468,37 @@ memif_msg_receive_connect (memif_connection_t *c, memif_msg_t *msg)
     c->on_connect ((void *) c, c->private_ctx);
 
     return 0;
+}
+
+/* master -> slave */
+static_fn int
+memif_msg_receive_connected (memif_connection_t *c, memif_msg_t *msg)
+{
+    memif_msg_connect_t *cm = &msg->connect;
+
+    int err = 0;
+    err = memif_connect1 (c);
+    if (err < 0)
+        return err;
+
+    strncpy ((char *) c->remote_name, (char *) cm->if_name, strlen ((char *) cm->if_name));
+
+    c->on_connect ((void *) c, c->private_ctx);
+
+    return 0;
+}
+
+static_fn int
+memif_msg_receive_disconnect (memif_connection_t *c, memif_msg_t *msg)
+{
+    memif_msg_disconnect_t *d = &msg->disconnect;
+
+    strncpy ((char *) c->remote_disconnect_string, (char *) d->string,
+        strlen ((char *) d->string));
+
+    /* on returning error, handle function will call memif_disconnect () */
+    error_return ("disconnect received: %s, mode: %d",
+                c->remote_disconnect_string, c->args.mode);
 }
 
 static_fn int

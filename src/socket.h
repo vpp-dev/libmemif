@@ -66,6 +66,16 @@ int memif_msg_receive_add_region (memif_connection_t *c, memif_msg_t *msg, int f
 
 int memif_msg_receive_add_ring (memif_connection_t *c, memif_msg_t *msg, int fd);
 
+void memif_msg_enq_connect (memif_connection_t *c);
+
+void memif_msg_enq_connected (memif_connection_t *c);
+
+int memif_msg_receive_connect (memif_connection_t *c, memif_msg_t *msg);
+
+int memif_msg_receive_connected (memif_connection_t *c, memif_msg_t *msg);
+
+int memif_msg_receive_disconnect (memif_connection_t *c, memif_msg_t *msg);
+
 #else
 #define static_fn static
 #endif /* MEMIF_UNIT_TEST */
