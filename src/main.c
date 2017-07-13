@@ -78,6 +78,26 @@ typedef struct
 
 libmemif_main_t libmemif_main;
 
+#define DBG_TX_BUF (0)
+#define DBG_RX_BUF (1)
+
+static void
+print_bytes (void *data, uint16_t len, uint8_t q)
+{
+    if (q == DBG_TX_BUF)
+        printf ("\nTX:\n\t");
+    else
+        printf ("\nRX:\n\t");
+    int i;
+    for (i = 0; i < len; i++)
+        {
+            if (i % 8 == 0)
+                printf ("\n%d:\t", i);
+            printf ("%02X ", ((uint8_t *) (data)) [i]);
+        }
+    printf ("\n\n");
+}
+
 static void
 print_conn (memif_connection_t *c)
 {
@@ -742,6 +762,152 @@ memif_buffer_free (memif_conn_handle_t conn, uint16_t qid,
     ring->tail = tail;
         
     return i;
+}
+
+int
+memif_tx_burst (memif_conn_handle_t conn, uint16_t qid,
+                memif_buffer_t **bufs, uint16_t count)
+{
+    memif_connection_t *c = (memif_connection_t *) conn;
+    memif_queue_t *mq = c->tx_queues;
+    memif_ring_t *ring = mq->ring;
+    uint16_t head = ring->head;
+    uint16_t mask = (1 << mq->log2_ring_size) - 1;
+    uint16_t tx = 0;
+    memif_buffer_t *b0, *b1;
+
+    while (count)
+    {
+        while (count > 2)
+        {
+            b0 = (*(bufs + tx));
+            b1 = (*(bufs + tx + 1));
+            ring->desc[b0->desc_index].length = b0->data_len;
+            ring->desc[b1->desc_index].length = b1->data_len;
+
+#ifdef MEMIF_DBG_SHM
+            print_bytes (b0->data , b0->data_len, DBG_TX_BUF);
+            print_bytes (b1->data , b1->data_len, DBG_TX_BUF);
+#endif
+
+            head = (b0->desc_index + 1) & mask;
+            head = (b1->desc_index + 1) & mask;
+
+            b0->data = NULL;
+            b0->data_len = 0;
+            b1->data = NULL;
+            b1->data_len = 0;
+
+            count -= 2;
+            tx += 2;
+        }
+
+        b0 = (*(bufs + tx));
+        ring->desc[b0->desc_index].length = b0->data_len;
+
+#ifdef MEMIF_DBG_SHM
+        print_bytes (b0->data , b0->data_len, DBG_TX_BUF);
+#endif
+
+        head = (b0->desc_index + 1) & mask;
+
+        b0->data = NULL;
+        b0->data_len = 0;
+
+        count--;
+        tx++;
+    }
+    ring->head = head;
+
+    c->alloc_buf_num -= tx;
+    
+    if ((ring->flags & MEMIF_RING_FLAG_MASK_INT) == 0)
+    {
+        uint64_t a = 1;
+        int r = write (mq->int_fd, &a, sizeof (a));
+        if (r < 0)
+            error_return ("write: %s fd %d", strerror (errno), mq->int_fd);
+    }
+
+    return tx;
+}
+
+int
+memif_rx_burst (memif_conn_handle_t conn, uint16_t qid,
+                memif_buffer_t **bufs, uint16_t count)
+{
+    memif_connection_t *c = (memif_connection_t *) conn;
+    memif_queue_t *mq = c->rx_queues;
+    memif_ring_t *ring = mq->ring;
+    uint16_t head = ring->head;
+    uint16_t ns, rx = 0;
+    uint16_t mask = (1 << mq->log2_ring_size) - 1;
+    memif_buffer_t *b0, *b1;
+
+    if (head == mq->last_head)
+        return 0;
+
+    if (head > mq->last_head)
+        ns = head - mq->last_head;
+    else
+        ns = (1 << mq->log2_ring_size) - mq->last_head + head;
+
+    while (ns && count)
+    {
+        while ((ns > 2) && (count > 2))
+        {
+            b0 = (memif_buffer_t *) malloc (sizeof (memif_buffer_t));
+            b1 = (memif_buffer_t *) malloc (sizeof (memif_buffer_t));
+
+            b0->desc_index = mq->last_head;
+            b1->desc_index = mq->last_head + 1;
+            b0->data = memif_get_buffer (conn, ring, mq->last_head);
+            b1->data = memif_get_buffer (conn, ring, mq->last_head + 1);
+            b0->data_len = ring->desc[mq->last_head].length;
+            b1->data_len = ring->desc[mq->last_head + 1].length;
+            b0->buffer_len = ring->desc[mq->last_head].buffer_length;
+            b1->buffer_len = ring->desc[mq->last_head + 1].buffer_length;
+
+            (*(bufs + rx)) = b0;
+            (*(bufs + rx + 1)) = b1;
+
+#ifdef MEMIF_DBG_SHM
+            print_bytes (b0->data , b0->data_len, DBG_RX_BUF);
+            print_bytes (b1->data , b1->data_len, DBG_RX_BUF);
+#endif
+
+            mq->last_head = (mq->last_head + 2) & mask;
+
+            ns -= 2;
+            count -= 2;
+            rx += 2;
+        }
+        b0 = (memif_buffer_t *) malloc (sizeof (memif_buffer_t));
+
+        b0->desc_index = mq->last_head;
+        b0->data = memif_get_buffer (conn, ring, mq->last_head);
+        b0->data_len = ring->desc[mq->last_head].length;
+        b0->buffer_len = ring->desc[mq->last_head].buffer_length;
+
+        (*(bufs + rx)) = b0;
+
+#ifdef MEMIF_DBG_SHM
+        print_bytes (b0->data , b0->data_len, DBG_RX_BUF);
+#endif
+
+        mq->last_head = (mq->last_head + 1) & mask;
+
+        ns--;
+        count--;
+        rx++;
+    }
+
+    if (ns)
+    {
+        DBG ("ring buffer full");
+    }
+
+    return rx;
 }
 
 int
