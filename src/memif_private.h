@@ -43,9 +43,8 @@
 
 #define MEMIF_MAX_FDS 512
 
-#define MEMIF_DEBUG 1
 
-#if MEMIF_DEBUG == 1
+#ifdef MEMIF_DBG
 #define DBG(...) do {                                                             \
                         printf("MEMIF_DEBUG:%s:%s:%d: ", __FILE__, __func__, __LINE__);  \
                         printf(__VA_ARGS__);                                            \
@@ -58,11 +57,6 @@
                       printf("\n");                                           \
                       } while (0)
 
-#else
-#define DBG(...)
-#define DBG_UNIX(...)
-#endif /* MEMIF_DEBUG */
-
 #define error_return_unix(...) do {                                             \
                                 DBG_UNIX(__VA_ARGS__);                          \
                                 return -1;                                      \
@@ -71,6 +65,18 @@
                             DBG(__VA_ARGS__);                                   \
                             return -1;                                          \
                             } while (0)
+#else
+#define DBG(...)
+#define DBG_UNIX(...)
+#define error_return_unix(...) do {                                             \
+                                return -1;                                      \
+                                } while (0)
+#define error_return(...) do {                                                  \
+                            return -1;                                          \
+                            } while (0)
+
+#endif /* MEMIF_DBG */
+
 
 typedef struct
 {
@@ -130,6 +136,8 @@ typedef struct memif_connection
 
     memif_queue_t *rx_queues;
     memif_queue_t *tx_queues;
+
+    uint32_t alloc_buf_num;
 
     uint16_t flags;
 #define MEMIF_CONNECTION_FLAG_WRITE (1 << 0)
