@@ -32,6 +32,8 @@
 #define MEMIF_FD_EVENT_ERROR (1 << 2)
 /* if set, informs that fd is going to be closed (user may want to stop watching for events on this fd) */
 #define MEMIF_FD_EVENT_DEL   (1 << 3)
+/* update events */
+#define MEMIF_FD_EVENT_MOD   (1 << 4)
 
 typedef void* memif_conn_handle_t;
 
@@ -71,6 +73,37 @@ typedef struct
     uint8_t instance_name[32];
     memif_interface_mode_t  mode:8;
 } memif_conn_args_t;
+
+typedef struct
+{
+    uint16_t desc_index;
+    uint32_t buffer_len;
+    uint32_t data_len;
+    void *data;
+} memif_buffer_t;
+
+typedef struct
+{
+    uint8_t if_name[32];
+    uint8_t inst_name[32];
+    uint8_t remote_if_name[32];
+    uint8_t remote_inst_name[32];
+
+    uint32_t id;
+    uint8_t secret[24]; /* optional */
+    uint8_t role; /* 0 = master, 1 = slave */
+    uint8_t mode; /* 0 = ethernet, 1 = ip, 2 = punt/inject */
+    uint8_t socket_filename[128];
+    uint32_t ring_size;
+    uint16_t buffer_size;
+    uint8_t rx_queues;
+    uint8_t tx_queues;
+
+    uint8_t link_up_down; /* 1 = up, 0 = down */
+} memif_details_t;
+
+
+memif_details_t memif_get_details (memif_conn_handle_t conn);
 
 /** \brief Memif initialization
     @param on_control_fd_update - if control fd updates inform user to watch new fd
@@ -134,5 +167,12 @@ int memif_get_queue_efd (memif_conn_handle_t conn, uint16_t qid);
     set connection handle to NULL, to avoid possible double free
 */
 int memif_delete (memif_conn_handle_t *conn);
+
+int memif_buffer_alloc (memif_conn_handle_t conn, uint16_t qid,
+                        memif_buffer_t **bufs, uint16_t count);
+
+int memif_buffer_free (memif_conn_handle_t conn, uint16_t qid,
+                       memif_buffer_t **bufs, uint16_t count);
+
 
 #endif /* _LIBMEMIF_H_ */

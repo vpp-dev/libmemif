@@ -172,6 +172,7 @@ memif_create (memif_conn_handle_t *c, memif_conn_args_t *args,
     conn->on_connect = on_connect;
     conn->on_disconnect = on_disconnect;
     conn->private_ctx = private_ctx;
+    conn->alloc_buf_num = 0;
 
     uint8_t l = strlen ((char *) args->interface_name);
     strncpy ((char *) conn->args.interface_name, (char *) args->interface_name, l);
@@ -413,11 +414,23 @@ memif_disconnect_internal (memif_connection_t *c)
     /* TODO: support multiple rings */
     if (c->tx_queues != NULL)
     {
+        if (c->tx_queues->int_fd > 0)
+        {
+            lm->control_fd_update (c->tx_queues->int_fd, MEMIF_FD_EVENT_DEL);
+            close (c->tx_queues->int_fd);
+        }
+        c->tx_queues->int_fd = -1;
         free (c->tx_queues);
         c->tx_queues = NULL;
     }
     if (c->rx_queues != NULL)
     {
+        if (c->rx_queues->int_fd > 0)
+        {
+            lm->control_fd_update (c->rx_queues->int_fd, MEMIF_FD_EVENT_DEL);
+            close (c->rx_queues->int_fd);
+        }
+        c->rx_queues->int_fd = -1;
         free (c->rx_queues);
         c->rx_queues = NULL;
     }
@@ -479,6 +492,8 @@ memif_delete (memif_conn_handle_t *conn)
 int
 memif_connect1 (memif_connection_t *c)
 {
+    libmemif_main_t *lm = &libmemif_main;
+
     memif_region_t *mr = c->regions;
     /* TODO: support multiple regions */
     if (mr != NULL)
@@ -513,6 +528,9 @@ memif_connect1 (memif_connection_t *c)
             error_return ("wrong cookie on tx ring %u", i);
         i++;
     }
+
+    lm->control_fd_update (c->fd, MEMIF_FD_EVENT_READ | MEMIF_FD_EVENT_MOD);
+
     return 0;
 }
 
@@ -604,4 +622,178 @@ memif_init_regions_and_queues (memif_connection_t *conn)
     }
 
     return 0;
+}
+
+int
+memif_buffer_alloc (memif_conn_handle_t conn, uint16_t qid,
+                    memif_buffer_t **bufs, uint16_t count)
+{
+    memif_connection_t *c = (memif_connection_t *) conn;
+    memif_queue_t *mq = c->tx_queues;
+    memif_ring_t *ring = mq->ring;
+    memif_buffer_t *b0, *b1;
+    uint16_t mask = (1 << mq->log2_ring_size) - 1;
+    uint16_t i = 0, s0, s1, ns;
+
+    if (ring->tail != ring->head)
+    {
+        if (ring->head > ring->tail)
+            ns = (1 << mq->log2_ring_size) - ring->head + ring->tail;
+        else
+            ns = ring->tail - ring->head;
+    }
+    else
+        ns = (1 << mq->log2_ring_size);
+
+    /* if head == tail receive function will asume that no packets are available */
+    ns -= 1;
+
+    while (count && ns)
+    {
+        while ((count > 2) && (ns > 2))
+        {
+            s0 = (ring->head + c->alloc_buf_num + i) & mask;
+            s1 = (ring->head + c->alloc_buf_num + i + 1) & mask;
+
+            b0 = (memif_buffer_t *) malloc (sizeof (memif_buffer_t));
+            b1 = (memif_buffer_t *) malloc (sizeof (memif_buffer_t));
+
+            b0->desc_index = s0;
+            b1->desc_index = s1;
+            b0->buffer_len = ring->desc[s0].buffer_length;
+            b1->buffer_len = ring->desc[s1].buffer_length;
+            /* TODO: support multiple regions -> ring descriptor contains region index */
+            b0->data = c->regions->shm + ring->desc[s0].offset;
+            b1->data = c->regions->shm + ring->desc[s1].offset;
+
+            (*(bufs + i)) = b0;
+            (*(bufs + i + 1)) = b1;
+            DBG ("allocated ring slots %u, %u", s0, s1);
+            count -= 2;
+            ns -= 2;
+            i += 2;
+        }
+        s0 = (ring->head + c->alloc_buf_num + i) & mask;
+
+        b0 = (memif_buffer_t *) malloc (sizeof (memif_buffer_t));
+
+        b0->desc_index = s0;
+        b0->buffer_len = ring->desc[s0].buffer_length;
+        b0->data = c->regions->shm + ring->desc[s0].offset;
+
+        (*(bufs + i)) = b0;
+        DBG ("allocated ring slot %u", s0);
+        count--;
+        ns--;
+        i++;
+    }
+
+    c->alloc_buf_num += i;
+
+    DBG ("allocated: %u/%u bufs. Total %u allocated bufs", i, count, c->alloc_buf_num);
+
+    if (count)
+        DBG ("ring buffer full! qid: %u", qid);
+
+    return i;
+}
+
+int
+memif_buffer_free (memif_conn_handle_t conn, uint16_t qid,
+                   memif_buffer_t **bufs, uint16_t count)
+{
+    memif_connection_t *c = (memif_connection_t *) conn;
+    memif_queue_t *mq = c->rx_queues;
+    memif_ring_t *ring = mq->ring;
+    uint16_t tail = ring->tail;
+    uint16_t mask = (1 << mq->log2_ring_size) - 1;
+    int i = 0;
+    memif_buffer_t *b0, *b1;
+
+    while (count)
+    {
+        while (count > 2)
+        {
+            b0 = (*(bufs + i));
+            b1 = (*(bufs + i + 1));
+            tail = (b0->desc_index + 1) & mask;
+            tail = (b1->desc_index + 1) & mask;
+            b0->data = NULL;
+            b1->data = NULL;
+            free (b0);
+            free (b1);
+            (*(bufs + i)) = b0 = NULL;
+            (*(bufs + i + 1)) = b1 = NULL;
+
+
+            count -= 2;
+            i += 2;
+        }
+        b0 = (*(bufs + i));
+        tail = (b0->desc_index + 1) & mask;
+        b0->data = NULL;
+        free (b0);
+        (*(bufs + i)) = b0 = NULL;
+
+        count--;
+        i++;
+    }
+
+    ring->tail = tail;
+        
+    return i;
+}
+
+int
+memif_get_queue_efd (memif_conn_handle_t conn, uint16_t qid)
+{
+    memif_connection_t *c = (memif_connection_t *) conn;
+    return c->rx_queues->int_fd;
+}
+
+memif_details_t
+memif_get_details (memif_conn_handle_t conn)
+{
+    memif_connection_t *c = (memif_connection_t *) conn;
+    memif_details_t md;
+    memset (&md, 0, sizeof (md));
+    /* interface name */
+    strncpy ((char *) md.if_name, (char *) c->args.interface_name,
+                strlen ((char *) c->args.interface_name));
+    /* instance name */
+    strncpy ((char *) md.inst_name, (char *) c->args.instance_name,
+                strlen ((char *) c->args.instance_name));
+    /* remote interface name */
+    strncpy ((char *) md.remote_if_name, (char *) c->remote_if_name,
+                strlen ((char *) c->remote_if_name));
+    /* remote instance name */
+    strncpy ((char *) md.remote_inst_name, (char *) c->remote_name,
+                strlen ((char *) c->remote_name));
+    /* interface id */
+    md.id = c->args.interface_id;
+    /* secret */
+    if (c->args.secret)
+        strncpy ((char *) md.secret, (char *) c->args.secret,
+                    strlen ((char *) c->args.secret));
+    /* role */
+    md.role = (c->args.is_master) ? 0 : 1;
+    /* mode */
+    md.mode = c->args.mode;
+    /* socket filename */
+    uint32_t l = strlen ((char *) c->args.socket_filename);
+    if (l > 128)
+        l = 128;
+    strncpy ((char *) md.socket_filename, (char *) c->args.socket_filename, l);
+    /* ring size */
+    md.ring_size = (1 << c->args.log2_ring_size);
+    /* buffer size */
+    md.buffer_size = c->args.buffer_size;
+    /* rx queues */
+    md.rx_queues = (c->args.is_master) ? c->args.num_s2m_rings : c->args.num_m2s_rings;
+    /* tx queues */
+    md.tx_queues = (c->args.is_master) ? c->args.num_m2s_rings : c->args.num_s2m_rings;
+    /* link up down */
+    md.link_up_down = (c->fd > 0) ? 1 : 0;
+
+    return md;
 }
