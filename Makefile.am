@@ -15,6 +15,12 @@ AUTOMAKE_OPTIONS = foreign subdir-objects
 
 ACLOCAL_AMFLAGS = -I m4
 
+AM_CPPFLAGS = -g -DMEMIF_DBG -DICMP_DBG
+
+.PHONY: release
+release:
+	$(MAKE) AM_CPPFLAGS="-O3"
+
 #
 # unit_test
 #
@@ -31,14 +37,14 @@ unit_test_CPPFLAGS = $(AM_CPPFLAGS) -Itest -Isrc -DMEMIF_UNIT_TEST
 # main lib
 #
 libmemif_la_SOURCES = src/main.c src/socket.c
-libmemif_la_CPPFLAGS = $(AM_CPPFLAGS) -Isrc -ggdb
+libmemif_la_CPPFLAGS = $(AM_CPPFLAGS) -Isrc
 
 #
 # ICMP responder example
 #
-icmp_responder_SOURCES = examples/icmp_responder/main.c
+icmp_responder_SOURCES = examples/icmp_responder/main.c examples/icmp_responder/icmp_proto.c
 icmp_responder_LDADD = libmemif.la
-icmp_responder_CPPFLAGS = $(AM_CPPFLAGS) -Isrc -ggdb
+icmp_responder_CPPFLAGS = $(AM_CPPFLAGS) -Isrc -Iexamples/icmp_responder
 
 noinst_PROGRAMS = icmp_responder
 
