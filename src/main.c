@@ -192,7 +192,6 @@ memif_create (memif_conn_handle_t *c, memif_conn_args_t *args,
     conn->on_connect = on_connect;
     conn->on_disconnect = on_disconnect;
     conn->private_ctx = private_ctx;
-    conn->alloc_buf_num = 0;
 
     uint8_t l = strlen ((char *) args->interface_name);
     strncpy ((char *) conn->args.interface_name, (char *) args->interface_name, l);
@@ -625,6 +624,7 @@ memif_init_regions_and_queues (memif_connection_t *conn)
         mq->log2_ring_size = conn->args.log2_ring_size;
         mq->region = 0;
         mq->offset = (void *) mq->ring - (void *) conn->regions->shm;
+        mq->alloc_bufs = 0;
         conn->tx_queues = mq;
     }
 
@@ -638,6 +638,7 @@ memif_init_regions_and_queues (memif_connection_t *conn)
         mq->region = 0;
         mq->offset = (void *) mq->ring - (void *) conn->regions->shm;
         mq->last_head = 0; 
+        mq->alloc_bufs = 0;
         conn->rx_queues = mq;
     }
 
@@ -672,8 +673,8 @@ memif_buffer_alloc (memif_conn_handle_t conn, uint16_t qid,
     {
         while ((count > 2) && (ns > 2))
         {
-            s0 = (ring->head + c->alloc_buf_num + i) & mask;
-            s1 = (ring->head + c->alloc_buf_num + i + 1) & mask;
+            s0 = (ring->head + mq->alloc_bufs + i) & mask;
+            s1 = (ring->head + mq->alloc_bufs + i + 1) & mask;
 
             b0 = (memif_buffer_t *) malloc (sizeof (memif_buffer_t));
             b1 = (memif_buffer_t *) malloc (sizeof (memif_buffer_t));
@@ -693,7 +694,7 @@ memif_buffer_alloc (memif_conn_handle_t conn, uint16_t qid,
             ns -= 2;
             i += 2;
         }
-        s0 = (ring->head + c->alloc_buf_num + i) & mask;
+        s0 = (ring->head + mq->alloc_bufs + i) & mask;
 
         b0 = (memif_buffer_t *) malloc (sizeof (memif_buffer_t));
 
@@ -708,9 +709,9 @@ memif_buffer_alloc (memif_conn_handle_t conn, uint16_t qid,
         i++;
     }
 
-    c->alloc_buf_num += i;
+    mq->alloc_bufs += i;
 
-    DBG ("allocated: %u/%u bufs. Total %u allocated bufs", i, count, c->alloc_buf_num);
+    DBG ("allocated: %u/%u bufs. Total %u allocated bufs", i, count, mq->alloc_bufs);
 
     if (count)
         DBG ("ring buffer full! qid: %u", qid);
@@ -819,8 +820,8 @@ memif_tx_burst (memif_conn_handle_t conn, uint16_t qid,
     }
     ring->head = head;
 
-    c->alloc_buf_num -= tx;
-    
+    mq->alloc_bufs -= tx;
+
     if ((ring->flags & MEMIF_RING_FLAG_MASK_INT) == 0)
     {
         uint64_t a = 1;
