@@ -174,5 +174,10 @@ int memif_buffer_alloc (memif_conn_handle_t conn, uint16_t qid,
 int memif_buffer_free (memif_conn_handle_t conn, uint16_t qid,
                        memif_buffer_t **bufs, uint16_t count);
 
+int memif_tx_burst (memif_conn_handle_t conn, uint16_t qid,
+                    memif_buffer_t **bufs, uint16_t count);
+
+int memif_rx_burst (memif_conn_handle_t conn, uint16_t qid,
+                    memif_buffer_t **bufs, uint16_t count);
 
 #endif /* _LIBMEMIF_H_ */
