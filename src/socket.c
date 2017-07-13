@@ -206,6 +206,7 @@ memif_msg_enq_add_ring (memif_connection_t *c, uint8_t index, uint8_t dir)
     e->fd = mq->int_fd;
     ar->index = index;
     ar->offset = mq->offset;
+    ar->region = index;
     ar->log2_ring_size = mq->log2_ring_size;
     ar->flags = (dir == MEMIF_RING_S2M) ? MEMIF_MSG_ADD_RING_FLAG_S2M : 0;
 
@@ -488,7 +489,7 @@ memif_msg_receive_connect (memif_connection_t *c, memif_msg_t *msg)
     if (err < 0)
         return err;
 
-    strncpy ((char *) c->remote_name, (char *) cm->if_name, strlen ((char *) cm->if_name));
+    strncpy ((char *) c->remote_if_name, (char *) cm->if_name, strlen ((char *) cm->if_name));
 
     c->on_connect ((void *) c, c->private_ctx);
 
@@ -506,7 +507,7 @@ memif_msg_receive_connected (memif_connection_t *c, memif_msg_t *msg)
     if (err < 0)
         return err;
 
-    strncpy ((char *) c->remote_name, (char *) cm->if_name, strlen ((char *) cm->if_name));
+    strncpy ((char *) c->remote_if_name, (char *) cm->if_name, strlen ((char *) cm->if_name));
 
     c->on_connect ((void *) c, c->private_ctx);
 
