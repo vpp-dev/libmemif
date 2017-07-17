@@ -42,7 +42,7 @@ memif_msg_send (int fd, memif_msg_t *msg, int afd)
     struct msghdr mh = { 0 };
     struct iovec iov[1];
     char ctl[CMSG_SPACE (sizeof (int))];
-    int rv;
+    int rv, err = MEMIF_ERR_SUCCESS; /* 0 */
 
     iov[0].iov_base = (void *) msg;
     iov[0].iov_len = sizeof (memif_msg_t);
@@ -63,17 +63,19 @@ memif_msg_send (int fd, memif_msg_t *msg, int afd)
     }
     rv = sendmsg (fd, &mh, 0);
     if (rv < 0)
-        error_return ("sendmsg: %s fd %d", strerror (errno), fd);
+        err = memif_syscall_error_handler (errno);
     DBG ("Message type %u sent", msg->type);
-    return rv;
+    return err;
 }
 
 /* response from memif master - master is ready to handle next message */
-static_fn void
+static_fn int
 memif_msg_enq_ack (memif_connection_t *c)
 {
     memif_msg_queue_elt_t *e =
         (memif_msg_queue_elt_t *) malloc (sizeof (memif_msg_queue_elt_t));
+    if (e == NULL)
+        return memif_syscall_error_handler (errno);
 
     e->msg.type = MEMIF_MSG_TYPE_ACK;
     e->fd = -1;
@@ -82,7 +84,7 @@ memif_msg_enq_ack (memif_connection_t *c)
     if (c->msg_queue == NULL)
     {
         c->msg_queue = e;
-        return;
+        return MEMIF_ERR_SUCCESS; /* 0 */
     }
 
     memif_msg_queue_elt_t *cur = c->msg_queue;
@@ -91,6 +93,8 @@ memif_msg_enq_ack (memif_connection_t *c)
         cur = cur->next;
     }
     cur->next = e;
+
+    return MEMIF_ERR_SUCCESS; /* 0 */
 }
 
 static_fn int
@@ -115,11 +119,13 @@ memif_msg_send_hello (memif_connection_t *c)
 }
 
 /* send id and secret (optional) for interface identification */
-static_fn void
+static_fn int
 memif_msg_enq_init (memif_connection_t *c)
 {
     memif_msg_queue_elt_t *e =
         (memif_msg_queue_elt_t *) malloc (sizeof (memif_msg_queue_elt_t));
+    if (e == NULL)
+        return memif_syscall_error_handler (errno);
     
     memif_msg_init_t *i = &e->msg.init;
 
@@ -138,7 +144,7 @@ memif_msg_enq_init (memif_connection_t *c)
     if (c->msg_queue == NULL)
     {
         c->msg_queue = e;
-        return;
+        return MEMIF_ERR_SUCCESS; /* 0 */
     }
 
     memif_msg_queue_elt_t *cur = c->msg_queue;
@@ -147,20 +153,21 @@ memif_msg_enq_init (memif_connection_t *c)
         cur = cur->next;
     }
     cur->next = e;
+
+    return MEMIF_ERR_SUCCESS; /* 0 */
 }
 
 /* send information about region specified by region_index */
 static_fn int
 memif_msg_enq_add_region (memif_connection_t *c, uint8_t region_index)
 {
-    if (c->regions == NULL)
-        error_return ("no regions initialized");
-
     /* TODO: support multiple regions */
     memif_region_t *mr = c->regions;
 
     memif_msg_queue_elt_t *e =
         (memif_msg_queue_elt_t *) malloc (sizeof (memif_msg_queue_elt_t));
+    if (e == NULL)
+        return memif_syscall_error_handler (errno);
 
     memif_msg_add_region_t *ar = &e->msg.add_region;
 
@@ -173,7 +180,7 @@ memif_msg_enq_add_region (memif_connection_t *c, uint8_t region_index)
     if (c->msg_queue == NULL)
     {
         c->msg_queue = e;
-        return 0;
+        return MEMIF_ERR_SUCCESS; /* 0 */
     }
 
     memif_msg_queue_elt_t *cur = c->msg_queue;
@@ -182,7 +189,8 @@ memif_msg_enq_add_region (memif_connection_t *c, uint8_t region_index)
         cur = cur->next;
     }
     cur->next = e;
-    return 0;
+
+    return MEMIF_ERR_SUCCESS; /* 0 */
 }
 
 /* send information about ring specified by direction (S2M | M2S) and index */
@@ -191,6 +199,8 @@ memif_msg_enq_add_ring (memif_connection_t *c, uint8_t index, uint8_t dir)
 {
     memif_msg_queue_elt_t *e =
         (memif_msg_queue_elt_t *) malloc (sizeof (memif_msg_queue_elt_t));
+    if (e == NULL)
+        return memif_syscall_error_handler (errno);
 
     memif_msg_add_ring_t *ar = &e->msg.add_ring;
 
@@ -214,7 +224,7 @@ memif_msg_enq_add_ring (memif_connection_t *c, uint8_t index, uint8_t dir)
     if (c->msg_queue == NULL)
     {
         c->msg_queue = e;
-        return 0;
+        return MEMIF_ERR_SUCCESS; /* 0 */
     }
 
     memif_msg_queue_elt_t *cur = c->msg_queue;
@@ -223,15 +233,19 @@ memif_msg_enq_add_ring (memif_connection_t *c, uint8_t index, uint8_t dir)
         cur = cur->next;
     }
     cur->next = e;
-    return 0;
+
+    return MEMIF_ERR_SUCCESS; /* 0 */
 }
 
 /* used as connection request from slave */
-static_fn void
+static_fn int
 memif_msg_enq_connect (memif_connection_t *c)
 {
     memif_msg_queue_elt_t *e =
         (memif_msg_queue_elt_t *) malloc (sizeof (memif_msg_queue_elt_t));
+    if (e == NULL)
+        return memif_syscall_error_handler (errno);
+
     memif_msg_connect_t *cm = &e->msg.connect;
 
     e->msg.type = MEMIF_MSG_TYPE_CONNECT;
@@ -243,7 +257,7 @@ memif_msg_enq_connect (memif_connection_t *c)
     if (c->msg_queue == NULL)
     {
         c->msg_queue = e;
-        return;
+        return MEMIF_ERR_SUCCESS; /* 0 */
     }
 
     memif_msg_queue_elt_t *cur = c->msg_queue;
@@ -252,15 +266,19 @@ memif_msg_enq_connect (memif_connection_t *c)
         cur = cur->next;
     }
     cur->next = e;
-    return;
+
+    return MEMIF_ERR_SUCCESS; /* 0 */
 }
 
 /* used as confirmation of connection by master */
-static_fn void
+static_fn int
 memif_msg_enq_connected (memif_connection_t *c)
 {
     memif_msg_queue_elt_t *e =
         (memif_msg_queue_elt_t *) malloc (sizeof (memif_msg_queue_elt_t));
+    if (e == NULL)
+        return memif_syscall_error_handler (errno);
+
     memif_msg_connected_t *cm = &e->msg.connected;
     
     e->msg.type = MEMIF_MSG_TYPE_CONNECTED;
@@ -272,7 +290,7 @@ memif_msg_enq_connected (memif_connection_t *c)
     if (c->msg_queue == NULL)
     {
         c->msg_queue = e;
-        return;
+        return MEMIF_ERR_SUCCESS; /* 0 */
     }
 
     memif_msg_queue_elt_t *cur = c->msg_queue;
@@ -281,7 +299,8 @@ memif_msg_enq_connected (memif_connection_t *c)
         cur = cur->next;
     }
     cur->next = e;
-    return;
+
+    return MEMIF_ERR_SUCCESS; /* 0 */
 }
 
 /* immediately send disconnect msg */
@@ -315,7 +334,7 @@ memif_msg_receive_hello (memif_connection_t *c, memif_msg_t *msg)
         msg->hello.max_version < MEMIF_VERSION)
     {
         DBG ("incompatible protocol version");
-        return -1;
+        return MEMIF_ERR_PROTO;
     }
     /* use nested struct c->run containing following variables?
         (this would be used to adjust shared memory information while keeping
@@ -328,7 +347,7 @@ memif_msg_receive_hello (memif_connection_t *c, memif_msg_t *msg)
                                         c->args.log2_ring_size);
     strncpy ((char *) c->remote_name, (char *) h->name, strlen ((char *) h->name));
 
-    return 0;
+    return MEMIF_ERR_SUCCESS; /* 0 */
 }
 
 /* handle interface identification (id, secret (optional)) */
@@ -337,16 +356,20 @@ memif_msg_receive_init (memif_connection_t *c, memif_msg_t *msg)
 {
     memif_msg_init_t *i = &msg->init;
     uint8_t err_string[96];
+    int err = MEMIF_ERR_SUCCESS; /* 0 */
+    int err_disc;
     if (i->version != MEMIF_VERSION)
     {
         DBG ("MEMIF_VER_ERR");
         strncpy ((char *) err_string, MEMIF_VER_ERR, strlen (MEMIF_VER_ERR));
+        err = MEMIF_ERR_PROTO;
         goto error;
     }
     if (c->args.interface_id != i->id)
     {
         DBG ("MEMIF_ID_ERR");
         strncpy ((char *) err_string, MEMIF_ID_ERR, strlen (MEMIF_ID_ERR));
+        err = MEMIF_ERR_ID;
         goto error;
     }
 
@@ -355,18 +378,21 @@ memif_msg_receive_init (memif_connection_t *c, memif_msg_t *msg)
     {
         DBG ("MEMIF_SLAVE_ERR");
         strncpy ((char *) err_string, MEMIF_SLAVE_ERR, strlen (MEMIF_SLAVE_ERR));
+        err = MEMIF_ERR_ACCSLAVE;
         goto error;
     }
     if (c->fd != -1)
     {
         DBG ("MEMIF_CONN_ERR");
         strncpy ((char *) err_string, MEMIF_CONN_ERR, strlen (MEMIF_CONN_ERR));
+        err = MEMIF_ERR_ALRCONN;
         goto error;
     }
     if (i->mode != c->args.mode)
     {
         DBG ("MEMIF_MODE_ERR");
         strncpy ((char *) err_string, MEMIF_MODE_ERR, strlen (MEMIF_MODE_ERR));
+        err = MEMIF_ERR_MODE;
         goto error;
     }
     
@@ -382,7 +408,8 @@ memif_msg_receive_init (memif_connection_t *c, memif_msg_t *msg)
                     DBG ("MEMIF_SECRET_ERR");
                     strncpy ((char *) err_string,
                         MEMIF_SECRET_ERR, strlen (MEMIF_SECRET_ERR));
-                    return -1;
+                    err = MEMIF_ERR_SECRET;
+                    goto error;
                 }
             r = strncmp ((char *) i->secret, (char *) c->args.secret,
                      strlen ((char *) c->args.secret));
@@ -391,7 +418,8 @@ memif_msg_receive_init (memif_connection_t *c, memif_msg_t *msg)
                     DBG ("MEMIF_SECRET_ERR");
                     strncpy ((char *) err_string,
                         MEMIF_SECRET_ERR, strlen (MEMIF_SECRET_ERR));
-                return -1;
+                err = MEMIF_ERR_SECRET;
+                goto error;
             }
         }
         else
@@ -399,14 +427,21 @@ memif_msg_receive_init (memif_connection_t *c, memif_msg_t *msg)
             DBG ("MEMIF_NOSECRET_ERR");
             strncpy ((char *) err_string,
                 MEMIF_NOSECRET_ERR, strlen (MEMIF_NOSECRET_ERR));
-            return -1;
+            err = MEMIF_ERR_NOSECRET;
+            goto error;
         }     
     }
-    return 0;
+
+    return err;
 
 error:
-    memif_msg_send_disconnect (c, err_string, 1);
-    return -1;
+    if (c->fd != -1)
+    {
+        err_disc = memif_msg_send_disconnect (c, err_string, 1);
+        if (err_disc != 0)
+            return err_disc;
+    }
+    return err;
 }
 
 /* receive region information and add new region to connection (if possible) */
@@ -416,12 +451,14 @@ memif_msg_receive_add_region (memif_connection_t *c, memif_msg_t *msg, int fd)
     memif_msg_add_region_t *ar = &msg->add_region;
     memif_region_t *mr;
     if (fd < 0)
-        error_return ("missing memory region fd");
+        return MEMIF_ERR_NO_SHMFD;
 
     if (ar->index > MEMIF_MAX_REGION)
-        error_return ("maximum region limit reached");
+        return MEMIF_ERR_MAXREG;
 
     mr = (memif_region_t *) malloc (sizeof (memif_region_t ));
+    if (mr == NULL)
+        return memif_syscall_error_handler (errno);
     mr->fd = fd;
     mr->region_size = ar->size;
     mr->shm = NULL;
@@ -429,7 +466,7 @@ memif_msg_receive_add_region (memif_connection_t *c, memif_msg_t *msg, int fd)
     /* TODO: support multiple regions */
     c->regions = mr;
 
-    return 0;
+    return MEMIF_ERR_SUCCESS; /* 0 */
 }
 
 /* receive ring information and add new ring to connection queue
@@ -442,12 +479,12 @@ memif_msg_receive_add_ring (memif_connection_t *c, memif_msg_t *msg, int fd)
     memif_queue_t *mq;
 
     if (fd < 0)
-        error_return ("missing ring interrupt fd");
+        return MEMIF_ERR_NO_INTFD;
 
     if (ar->flags & MEMIF_MSG_ADD_RING_FLAG_S2M)
     {
         if (ar->index > MEMIF_MAX_S2M_RING)
-            error_return ("maximum ring limit reached");
+            return MEMIF_ERR_MAXRING;
 
         mq = (memif_queue_t *) malloc (sizeof (memif_queue_t));
         mq->int_fd = fd;
@@ -462,9 +499,11 @@ memif_msg_receive_add_ring (memif_connection_t *c, memif_msg_t *msg, int fd)
     else
     {
         if (ar->index > MEMIF_MAX_M2S_RING)
-            error_return ("maximum ring limit reached");
+            return MEMIF_ERR_MAXRING;
 
         mq = (memif_queue_t *) malloc (sizeof (memif_queue_t));
+        if (mq == NULL)
+            return memif_syscall_error_handler (errno);
         mq->int_fd = fd;
         mq->log2_ring_size = ar->log2_ring_size;
         mq->region = ar->region;
@@ -475,7 +514,7 @@ memif_msg_receive_add_ring (memif_connection_t *c, memif_msg_t *msg, int fd)
         c->args.num_m2s_rings++;
     }
 
-    return 0;
+    return MEMIF_ERR_SUCCESS; /* 0 */
 }
 
 /* slave -> master */
@@ -484,16 +523,16 @@ memif_msg_receive_connect (memif_connection_t *c, memif_msg_t *msg)
 {
     memif_msg_connect_t *cm = &msg->connect;
 
-    int err = 0;
+    int err;
     err = memif_connect1 (c);
-    if (err < 0)
+    if (err != MEMIF_ERR_SUCCESS) /* 0 */
         return err;
 
     strncpy ((char *) c->remote_if_name, (char *) cm->if_name, strlen ((char *) cm->if_name));
 
     c->on_connect ((void *) c, c->private_ctx);
 
-    return 0;
+    return err;
 }
 
 /* master -> slave */
@@ -502,16 +541,16 @@ memif_msg_receive_connected (memif_connection_t *c, memif_msg_t *msg)
 {
     memif_msg_connect_t *cm = &msg->connect;
 
-    int err = 0;
+    int err;
     err = memif_connect1 (c);
-    if (err < 0)
+    if (err != MEMIF_ERR_SUCCESS) /* 0 */
         return err;
 
     strncpy ((char *) c->remote_if_name, (char *) cm->if_name, strlen ((char *) cm->if_name));
 
     c->on_connect ((void *) c, c->private_ctx);
 
-    return 0;
+    return err;
 }
 
 static_fn int
@@ -523,8 +562,9 @@ memif_msg_receive_disconnect (memif_connection_t *c, memif_msg_t *msg)
         strlen ((char *) d->string));
 
     /* on returning error, handle function will call memif_disconnect () */
-    error_return ("disconnect received: %s, mode: %d",
+    DBG ("disconnect received: %s, mode: %d",
                 c->remote_disconnect_string, c->args.mode);
+    return MEMIF_ERR_DISCONNECT;
 }
 
 static_fn int
@@ -536,7 +576,7 @@ memif_msg_receive (memif_connection_t *c)
     struct iovec iov[1];
     memif_msg_t msg = { 0 };
     ssize_t size;
-    int err = 0;
+    int err = MEMIF_ERR_SUCCESS; /* 0 */
     int fd = -1;
     int i = 0;
     
@@ -551,9 +591,9 @@ memif_msg_receive (memif_connection_t *c)
     if (size != sizeof (memif_msg_t))
     {
         if (size == 0)
-            error_return ("disconnected");
+            return MEMIF_ERR_DISCONNECTED;
         else
-            error_return ("malformed message received on fd %d", c->fd);
+            return MEMIF_ERR_MFMSG;
     }
 
     struct ucred *cr = 0;
@@ -585,63 +625,73 @@ memif_msg_receive (memif_connection_t *c)
             break;
 
         case MEMIF_MSG_TYPE_HELLO:
-            if ((err = memif_msg_receive_hello (c, &msg)) < 0)
+            if ((err = memif_msg_receive_hello (c, &msg)) != MEMIF_ERR_SUCCESS)
                 return err;
-            if ((err = memif_init_regions_and_queues (c)) < 0)
+            if ((err = memif_init_regions_and_queues (c)) != MEMIF_ERR_SUCCESS)
                 return err;
-            memif_msg_enq_init (c);
-            memif_msg_enq_add_region (c, 0);
+            if ((err = memif_msg_enq_init (c)) != MEMIF_ERR_SUCCESS)
+                return err;
+            if ((err = memif_msg_enq_add_region (c, 0)) != MEMIF_ERR_SUCCESS)
+                return err;
             /* TODO: support multiple rings */
-            memif_msg_enq_add_ring (c, i, MEMIF_RING_S2M);
-            memif_msg_enq_add_ring (c, i, MEMIF_RING_M2S);
-            memif_msg_enq_connect (c);
+            if ((err = memif_msg_enq_add_ring (c, i, MEMIF_RING_S2M)) != MEMIF_ERR_SUCCESS)
+                return err;
+            if ((err = memif_msg_enq_add_ring (c, i, MEMIF_RING_M2S)) != MEMIF_ERR_SUCCESS)
+                return err;
+            if ((err = memif_msg_enq_connect (c)) != MEMIF_ERR_SUCCESS)
+                return err;
             break;
 
         case MEMIF_MSG_TYPE_INIT:
-            if ((err = memif_msg_receive_init (c, &msg)) < 0)
+            if ((err = memif_msg_receive_init (c, &msg)) != MEMIF_ERR_SUCCESS)
                 return err;
             /* c->remote_pid = cr->pid */
             /* c->remote_uid = cr->uid */
             /* c->remote_gid = cr->gid */
-            memif_msg_enq_ack (c);
+            if ((err = memif_msg_enq_ack (c)) != MEMIF_ERR_SUCCESS)
+                return err;
             break;
 
         case MEMIF_MSG_TYPE_ADD_REGION:
-            if ((err = memif_msg_receive_add_region (c, &msg, fd)) < 0)
+            if ((err = memif_msg_receive_add_region (c, &msg, fd)) != MEMIF_ERR_SUCCESS)
                 return err;
-            memif_msg_enq_ack (c);
+            if ((err = memif_msg_enq_ack (c)) != MEMIF_ERR_SUCCESS)
+                return err;
             break;
 
         case MEMIF_MSG_TYPE_ADD_RING:
-            if ((err = memif_msg_receive_add_ring (c, &msg, fd)) < 0)
+            if ((err = memif_msg_receive_add_ring (c, &msg, fd)) != MEMIF_ERR_SUCCESS)
                 return err;
-            memif_msg_enq_ack (c);
+            if ((err = memif_msg_enq_ack (c)) != MEMIF_ERR_SUCCESS)
+                return err;
             break;
 
         case MEMIF_MSG_TYPE_CONNECT:
-            if ((err = memif_msg_receive_connect (c, &msg)) < 0)
+            if ((err = memif_msg_receive_connect (c, &msg)) != MEMIF_ERR_SUCCESS)
                 return err;
-            memif_msg_enq_connected (c);
+            if ((err = memif_msg_enq_ack (c)) != MEMIF_ERR_SUCCESS)
+                return err;
             break;
 
         case MEMIF_MSG_TYPE_CONNECTED:
-            if ((err = memif_msg_receive_connected (c, &msg)) < 0)
+            if ((err = memif_msg_receive_connected (c, &msg)) != MEMIF_ERR_SUCCESS)
                 return err;
             break;
 
         case MEMIF_MSG_TYPE_DISCONNECT:
-            if ((err = memif_msg_receive_disconnect (c, &msg)) < 0)
+            if ((err = memif_msg_receive_disconnect (c, &msg)) != MEMIF_ERR_SUCCESS)
                 return err;
             break;
 
         default:
-            error_return ("unknown message type (0x%x)", msg.type);
+            return MEMIF_ERR_UNKNOWN_MSG;;
             break;
     }
 
-    /* can send msg */
     c->flags |= MEMIF_CONNECTION_FLAG_WRITE;
-    return 0;
+/*    libmemif_main_t *lm = &libmemif_main;
+    lm->control_fd_update (c->fd, MEMIF_FD_EVENT_READ | MEMIF_FD_EVENT_MOD); */
+    return MEMIF_ERR_SUCCESS; /* 0 */
 }
 
 int
@@ -650,42 +700,52 @@ memif_conn_fd_error (memif_connection_t *c)
     DBG ("connection fd error");
     strncpy ((char *) c->remote_disconnect_string, "connection fd error",
         19);
-    memif_disconnect_internal (c);
-    return 0;
+    int err = memif_disconnect_internal (c);
+    return err;
 }
 
 /* calls memif_msg_receive to handle pending messages on socket */
 int
 memif_conn_fd_read_ready (memif_connection_t *c)
 {
-    int rv = 0;
-    rv = memif_msg_receive (c);
-    if (rv < 0)
+    int err;
+    err = memif_msg_receive (c);
+    if (err != 0)
     {
-        memif_disconnect_internal (c);
+        err = memif_disconnect_internal (c);
     }
-    return 0;
+    return err;
 }
 
 /* get msg from msg queue buffer and send it to socket */
 int
 memif_conn_fd_write_ready (memif_connection_t *c)
 {
-    int rv = 0; 
+    int err = MEMIF_ERR_SUCCESS; /* 0 */ 
+    
+
     if ((c->flags & MEMIF_CONNECTION_FLAG_WRITE) == 0)
-        return rv;
+        goto done;
 
     memif_msg_queue_elt_t *e = c->msg_queue;
     if (e == NULL)
-        return rv;
+        goto done;
 
     c->msg_queue = c->msg_queue->next;
-  
+
     c->flags &= ~MEMIF_CONNECTION_FLAG_WRITE;
- 
-    rv = memif_msg_send (c->fd, &e->msg, e->fd);
+/*
+    libmemif_main_t *lm = &libmemif_main;
+
+    lm->control_fd_update (c->fd,
+        MEMIF_FD_EVENT_READ | MEMIF_FD_EVENT_WRITE | MEMIF_FD_EVENT_MOD);
+*/ 
+    err = memif_msg_send (c->fd, &e->msg, e->fd);
     free(e);
-    return rv;
+    goto done;
+
+done:
+    return err;
 }
 
 int
@@ -702,8 +762,7 @@ memif_conn_fd_accept_ready (memif_connection_t *c)
 
     if (conn_fd < 0)
     {
-        DBG ("accept fd %d", c->fd);
-        return -1;
+        return memif_syscall_error_handler (errno);
     }
     DBG ("accept fd %d", c->fd);
     DBG ("conn fd %d", conn_fd);
@@ -713,12 +772,5 @@ memif_conn_fd_accept_ready (memif_connection_t *c)
     c->error_fn = memif_conn_fd_error;
     c->fd = conn_fd;
 
-    int e = memif_msg_send_hello (c);
-    if (e < 0)
-    {
-        DBG ("memif msg send hello error!");
-        return -1;
-    }
-
-    return 0;
+    return memif_msg_send_hello (c);
 }

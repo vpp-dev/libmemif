@@ -25,6 +25,7 @@
 #include <stdint.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <sys/timerfd.h>
 
 #include <libmemif.h>
 
@@ -77,6 +78,35 @@
 
 #endif /* MEMIF_DBG */
 
+#if 0
+
+typedef enum
+{
+    MEMIF_ERR_SUCCESS = 0,          /* success */
+/* SYSCALL ERRORS */
+    MEMIF_ERR_SYSCALL,              /* other syscall error */
+    MEMIF_ERR_ACCES,                /* permission denied */
+    MEMIF_ERR_FILE_LIMIT,           /* system open file limit */
+    MEMIF_ERR_PROC_FILE_LIMIT,      /* process open file limit */
+    MEMIF_ERR_ALREADY,              /* connection already requested */
+    MEMIF_ERR_AGAIN,                /* fd is not socket, or operation would block */
+    MEMIF_ERR_BAD_FD,               /* invalid fd */
+    MEMIF_ERR_NOMEM,                /* out of memory */
+/* LIBMEMIF ERRORS */
+    MEMIF_ERR_INVAL_ARG,            /* invalid argument */
+    MEMIF_ERR_NOCONN,               /* handle points to no connection */
+    MEMIF_ERR_CONN,                 /* handle points to existing connection */
+    MEMIF_ERR_CB_FDUPDATE,          /* user defined callback memif_control_fd_update_t error */
+    MEMIF_ERR_FILE_NOT_SOCK,        /* file specified by socket filename 
+                                       exists, but it's not socket */
+    MEMIF_ERR_NO_SHMFD,             /* missing shm fd */
+    MEMIF_ERR_COOKIE,               /* wrong cookie on ring */
+    MEMIF_ERR_NOBUF_RING,           /* ring buffer full */
+    MEMIF_ERR_NOBUF,                /* not enough memif buffers */
+    MEMIF_ERR_INT_WRITE,            /* send interrupt error */
+} memif_err_t;
+
+#endif /* 0 */
 
 typedef struct
 {
@@ -98,6 +128,7 @@ typedef struct
     int int_fd;
 
     uint64_t int_count;
+    uint32_t alloc_bufs;
 } memif_queue_t;
 
 typedef struct memif_msg_queue_elt
@@ -137,11 +168,37 @@ typedef struct memif_connection
     memif_queue_t *rx_queues;
     memif_queue_t *tx_queues;
 
-    uint32_t alloc_buf_num;
-
     uint16_t flags;
 #define MEMIF_CONNECTION_FLAG_WRITE (1 << 0)
 } memif_connection_t;
+
+/*
+ * WIP
+ */
+typedef struct
+{
+    int fd;
+    uint16_t use_count;
+    uint8_t *filename;
+} memif_socket_t;
+
+/*
+ * WIP
+ */ 
+/* probably function like memif_cleanup () will need to be called
+    close timerfd, free struct libmemif_main and its nested structures */
+typedef struct
+{
+    memif_control_fd_update_t *control_fd_update;
+    int timerfd;
+    struct itimerspec arm, disarm;
+
+    /* TODO: update to arrays support multiple connections */
+    memif_socket_t ms;
+    memif_connection_t *conn;
+} libmemif_main_t;
+
+extern libmemif_main_t libmemif_main;
 
 /* main.c */
 
@@ -152,6 +209,9 @@ int memif_connect1 (memif_connection_t *c);
 int memif_init_regions_and_queues (memif_connection_t *c);
 
 int memif_disconnect_internal (memif_connection_t *c);
+
+/* map errno to memif error code */
+int memif_syscall_error_handler (int err_code);
 
 #ifndef __NR_memfd_create
 #if defined __x86_64__
