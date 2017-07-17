@@ -20,7 +20,7 @@
 
 #include <memif_private.h>
 
-/* interface identification errors */
+/* interface identification errors (disconnect messages)*/
 #define MEMIF_VER_ERR       "incompatible version"
 #define MEMIF_ID_ERR        "unmatched interface id"
 #define MEMIF_SLAVE_ERR     "cannot connect to salve"
@@ -48,11 +48,11 @@ int memif_msg_send_disconnect (memif_connection_t *c, uint8_t *err_string, uint3
 
 int memif_msg_send (int fd, memif_msg_t *msg, int afd);
 
-void memif_msg_enq_ack (memif_connection_t *c);
+int memif_msg_enq_ack (memif_connection_t *c);
 
 int memif_msg_send_hello (memif_connection_t *c);
 
-void memif_msg_enq_init (memif_connection_t *c);
+int memif_msg_enq_init (memif_connection_t *c);
 
 int memif_msg_enq_add_region (memif_connection_t *c, uint8_t region);
 
@@ -66,9 +66,9 @@ int memif_msg_receive_add_region (memif_connection_t *c, memif_msg_t *msg, int f
 
 int memif_msg_receive_add_ring (memif_connection_t *c, memif_msg_t *msg, int fd);
 
-void memif_msg_enq_connect (memif_connection_t *c);
+int memif_msg_enq_connect (memif_connection_t *c);
 
-void memif_msg_enq_connected (memif_connection_t *c);
+int memif_msg_enq_connected (memif_connection_t *c);
 
 int memif_msg_receive_connect (memif_connection_t *c, memif_msg_t *msg);
 

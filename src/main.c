@@ -50,37 +50,103 @@
 /* private structs and functions */
 #include <memif_private.h>
 
-/*
- * WIP
- */ 
-typedef struct 
-{
-    int fd;
-    uint16_t use_count;
-    uint8_t *filename;
-} memif_socket_t;
-
-/*
- * WIP
- */ 
-/* probably function like memif_cleanup () will need to be called
-    close timerfd, free struct libmemif_main and its nested structures */
-typedef struct
-{
-    memif_control_fd_update_t *control_fd_update;
-    int timerfd;
-    struct itimerspec arm, disarm;
-
-    /* TODO: update to arrays support multiple connections */
-    memif_socket_t ms;
-    memif_connection_t *conn;
-} libmemif_main_t;
+#define ERRLIST_LEN 33
+#define MAX_ERRBUF_LEN 256
 
 libmemif_main_t libmemif_main;
+
+static char memif_buf[MAX_ERRBUF_LEN];
+
+const char* memif_errlist[ERRLIST_LEN] = { /* MEMIF_ERR_SUCCESS */
+    "Success.",
+                             /* MEMIF_ERR_SYSCALL */ 
+    "Unspecified syscall error (build with -DMEMIF_DBG or make debug).",
+                            /* MEMIF_ERR_ACCES */
+    "Permission to resoure denied.",
+                            /* MEMIF_ERR_FILE_LIMIT */
+    "System limit on total numer of open files reached.",
+                            /* MEMIF_ERR_PROC_FILE_LIMIT */
+    "Per-process limit on total number of open files reached.",
+                            /* MEMIF_ERR_ALREADY */
+    "Connection already requested.",
+                            /* MEMIF_ERR_AGAIN */
+    "File descriptor refers to file other than socket, or operation would block.",
+                            /* MEMIF_ERR_BAD_FD */
+    "Bad file descriptor.",
+                            /* MEMIF_ERR_NOMEM */
+    "Out of memory.",
+                            /* MEMIF_ERR_INVAL_ARG */
+    "Invalid argument.",
+                            /* MEMIF_ERR_NOCONN */
+    "Memif connection handle does not point to existing conenction",
+                            /* MEMIF_ERR_CONN */
+    "Memif connection handle points to existing connection",
+                            /* MEMIF_ERR_CB_FDUPDATE */
+    "User defined callback memif_control_fd_update_t returned error",
+                            /* MEMIF_ERR_FILE_NOT_SOCK */
+    "File specified by socket filename exists and is not socket.",
+                            /* MEMIF_ERR_NO_SHMFD */
+    "Missing shared memory file descriptor. (internal error)",
+                            /* MEMIF_ERR_COOKIE */
+    "Invalid cookie on ring. (internal error)",
+                            /* MEMIF_ERR_NOBUF_RING */
+    "Ring buffer full.",
+                            /* MEMIF_ERR_NOBUF */
+    "Not enough memif buffers. There are unreceived data in shared memory.",
+                            /* MEMIF_ERR_INT_WRITE */
+    "Send interrupt error.",
+                            /* MEMIF_ERR_MFMSG */
+    "Malformed message received on control channel.",
+                            /* MEMIF_ERR_PROTO */
+    "Incompatible memory interface protocol version.",
+                            /* MEMIF_ERR_ID */
+    "Unmatched interface id.",
+                            /* MEMIF_ERR_ACCSLAVE */
+    "Slave cannot accept connection reqest.",
+                            /* MEMIF_ERR_ALRCONN */
+    "Interface is already connected.",
+                            /* MEMIF_ERR_MODE */
+    "Mode mismatch.",
+                            /* MEMIF_ERR_SECRET */
+    "Secret mismatch.",
+                            /* MEMIF_ERR_NOSECRET */
+    "Secret required.",
+                            /* MEMIF_ERR_MAXREG */
+    "Limit on total number of regions reached.",
+                            /* MEMIF_ERR_MAXRING */
+    "Limit on total number of ring reached.",
+                            /* MEMIF_ERR_NO_INTFD */
+    "Missing interrupt file descriptor. (internal error)",
+                            /* MEMIF_ERR_DISCONNECT */
+    "Interface received disconnect request.",
+                            /* MEMIF_ERR_DISCONNECTED */
+    "Interface is disconnected.",
+                            /* MEMIF_ERR_UNKNOWN_MSG */
+    "Unknown message type received on control channel. (internal error)"
+ };
+
+#define MEMIF_ERR_UNDEFINED "undefined error"
+
+char *
+memif_strerror (int err_code)
+{
+    if (err_code > ERRLIST_LEN)
+    {
+        strncpy (memif_buf, MEMIF_ERR_UNDEFINED, strlen (MEMIF_ERR_UNDEFINED));
+        memif_buf[strlen (MEMIF_ERR_UNDEFINED)] = '\0';
+    }
+    else
+    {
+        strncpy (memif_buf, memif_errlist[err_code], strlen (memif_errlist[err_code]));
+        memif_buf[strlen (memif_errlist[err_code])] = '\0';
+    }
+    return memif_buf;
+}
 
 #define DBG_TX_BUF (0)
 #define DBG_RX_BUF (1)
 
+#if MEMIF_DBG_SHM
 static void
 print_bytes (void *data, uint16_t len, uint8_t q)
 {
@@ -97,20 +163,41 @@ print_bytes (void *data, uint16_t len, uint8_t q)
         }
     printf ("\n\n");
 }
+#endif /* MEMIF_DBG */
 
-static void
-print_conn (memif_connection_t *c)
+int
+memif_syscall_error_handler (int err_code)
 {
-    printf ("MEMIF CONNECTION:\n");
-    printf ("\tconn %p\n", c);
-    printf ("\tfd %d\n", c->fd);
-    printf ("\tregion %p\n", c->regions);
-    printf ("\ttx %p\n", c->tx_queues);
-    printf ("\trx %p\n", c->rx_queues);
+    DBG_UNIX ("%s", strerror (err_code));
+
+    if (err_code == 0)
+        return MEMIF_ERR_SUCCESS;
+    if (err_code == EACCES)
+        return MEMIF_ERR_ACCES;
+    if (err_code == ENFILE)
+        return MEMIF_ERR_FILE_LIMIT;
+    if (err_code == EMFILE)
+        return MEMIF_ERR_PROC_FILE_LIMIT;
+    if (err_code == ENOMEM)
+        return MEMIF_ERR_NOMEM;
+/* connection refused if master dows not exist
+    this error would spam the user until master was created */
+    if (err_code == ECONNREFUSED)
+        return MEMIF_ERR_SUCCESS;
+    if (err_code == EALREADY)
+        return MEMIF_ERR_ALREADY;
+    if (err_code == EAGAIN)
+        return MEMIF_ERR_AGAIN;
+    if (err_code == EBADF)
+        return MEMIF_ERR_BAD_FD;
+
+    /* other syscall errors */
+    return MEMIF_ERR_SYSCALL;
 }
 
 int memif_init (memif_control_fd_update_t *on_control_fd_update)
 {
+    int err = MEMIF_ERR_SUCCESS; /* 0 */
     libmemif_main_t *lm = &libmemif_main;
     lm->control_fd_update = on_control_fd_update;
     memset (&lm->ms, 0, sizeof (memif_socket_t));
@@ -119,8 +206,9 @@ int memif_init (memif_control_fd_update_t *on_control_fd_update)
     lm->timerfd = timerfd_create (CLOCK_REALTIME, TFD_NONBLOCK);
     if (lm->timerfd < 0)
     {
-        DBG ("timerfd: %s", strerror (errno));
-        return -1;
+        err = errno;
+        DBG ("timerfd: %s", strerror (err));
+        return memif_syscall_error_handler (err);
     }
 
     lm->arm.it_value.tv_sec = 2;
@@ -129,8 +217,12 @@ int memif_init (memif_control_fd_update_t *on_control_fd_update)
     lm->arm.it_interval.tv_nsec = 0;
     memset (&lm->disarm, 0, sizeof (lm->disarm));
 
-    /* TODO: check return */
-    lm->control_fd_update (lm->timerfd, MEMIF_FD_EVENT_READ);
+    /* check return or not? */
+    if (lm->control_fd_update (lm->timerfd, MEMIF_FD_EVENT_READ) < 0)
+    {
+        DBG ("user defined callback type memif_control_fd_update_t error!");
+        return MEMIF_ERR_CB_FDUPDATE;
+    }    
 
     return 0;
 }
@@ -156,22 +248,23 @@ memif_create (memif_conn_handle_t *c, memif_conn_args_t *args,
               memif_connection_update_t *on_disconnect,
               void *private_ctx)
 {
+    int err;
+    int sockfd = -1;
     memif_connection_t *conn = (memif_connection_t *) *c;
     if (conn != NULL)
     {
         DBG ("This handle already points to existing memif.");
-        return -1;
+        return MEMIF_ERR_CONN;
     }
     conn = (memif_connection_t *) malloc (sizeof (memif_connection_t));
     if (conn == NULL)
     {
-        DBG_UNIX ("out of memory!");
-        return -1;
+        err = memif_syscall_error_handler (errno);
+        goto error;
     }
+
     libmemif_main_t *lm = &libmemif_main;
 
-    int err;
-    int sockfd = -1;
     conn->args.interface_id = args->interface_id;
     /* lib or app? */
     if (args->log2_ring_size == 0)
@@ -205,8 +298,7 @@ memif_create (memif_conn_handle_t *c, memif_conn_args_t *args,
                     strlen ((char *) args->socket_filename));
         if (conn->args.socket_filename == NULL)
             {
-                DBG_UNIX ("out of memory!");
-                err = errno;
+                err = memif_syscall_error_handler (errno);
                 goto error;
             }
         strncpy ((char *) conn->args.socket_filename, (char *) args->socket_filename,
@@ -219,8 +311,7 @@ memif_create (memif_conn_handle_t *c, memif_conn_args_t *args,
         conn->args.socket_filename = (uint8_t *) malloc (sdl + sfl + 1);
         if (conn->args.socket_filename == NULL)
             {
-                DBG_UNIX ("out of memory!");
-                err = errno;
+                err = memif_syscall_error_handler (errno);
                 goto error;
             }
         strncpy ((char *) conn->args.socket_filename,
@@ -257,7 +348,7 @@ memif_create (memif_conn_handle_t *c, memif_conn_args_t *args,
                     }
                 else
                     {
-                        err = 0;
+                        err = MEMIF_ERR_FILE_NOT_SOCK;
                         DBG ("file with specified socket filename exists but is not socket");
                         goto error;
                     }
@@ -266,7 +357,7 @@ memif_create (memif_conn_handle_t *c, memif_conn_args_t *args,
             sockfd = socket (AF_UNIX, SOCK_SEQPACKET, 0);
             if (sockfd < 0)
             {
-                err = errno;
+                err = memif_syscall_error_handler (errno);
                 goto error;
             }
             un.sun_family = AF_UNIX;
@@ -275,27 +366,32 @@ memif_create (memif_conn_handle_t *c, memif_conn_args_t *args,
 
             if (setsockopt (sockfd, SOL_SOCKET, SO_PASSCRED, &on, sizeof (on)) < 0)
             {
-                err = errno;
+                err = memif_syscall_error_handler (errno);
                 goto error;
             }
             if (bind (sockfd, (struct sockaddr *) &un, sizeof (un)) == -1)
             {
-            err = errno;
+                err = memif_syscall_error_handler (errno);
             goto error;
             }
             if (listen (sockfd, 1) == -1)
             {
-                err = errno;
+                err = memif_syscall_error_handler (errno);
                 goto error;
             }
             if (stat ((char *) conn->args.socket_filename, &file_stat) == -1)
             {
-                err = errno;
+                err = memif_syscall_error_handler (errno);
                 goto error;
             }
             lm->ms.fd = sockfd;
             lm->ms.use_count++;
             lm->ms.filename = malloc (strlen ((char *) conn->args.socket_filename));
+            if (lm->ms.filename == NULL)
+            {
+                err = memif_syscall_error_handler (errno);
+                goto error;
+            }
             strncpy ((char *) lm->ms.filename, (char *) conn->args.socket_filename,
                             strlen ((char *) conn->args.socket_filename));
         }
@@ -308,7 +404,7 @@ memif_create (memif_conn_handle_t *c, memif_conn_args_t *args,
     {
         if (timerfd_settime (lm->timerfd, 0, &lm->arm, NULL) < 0)
         {
-            DBG ("timerfd: %s", strerror (errno));
+            err = memif_syscall_error_handler (errno);
             goto error;
         }
     }
@@ -323,16 +419,17 @@ error:
     sockfd = -1;
     if (conn->args.socket_filename)
         free (conn->args.socket_filename);
-    free (conn);
+    if (conn != NULL)
+        free (conn);
     *c = conn = NULL;
-    error_return_unix ("%s", strerror (err));
+    return err;
 }
 
 /* TODO: support multiple interfaces */
 int
 memif_control_fd_handler (int fd, uint8_t events)
 {
-    int i;
+    int i, rv, sockfd = -1, err = MEMIF_ERR_SUCCESS; /* 0 */
     memif_connection_t *conn;
     libmemif_main_t *lm = &libmemif_main;
     if (fd == lm->timerfd)
@@ -345,10 +442,11 @@ memif_control_fd_handler (int fd, uint8_t events)
             {
                 DBG ("try connect");
                 struct sockaddr_un sun;
-                int sockfd = socket (AF_UNIX, SOCK_SEQPACKET, 0);
+                sockfd = socket (AF_UNIX, SOCK_SEQPACKET, 0);
                 if (sockfd < 0)
                 {
-                    DBG ("%s", strerror (errno));
+                    err = memif_syscall_error_handler (errno);
+                    goto error;
                 }
 
                 sun.sun_family = AF_UNIX;
@@ -370,32 +468,50 @@ memif_control_fd_handler (int fd, uint8_t events)
                         only disarm if there is no disconnected slave */
                     if (timerfd_settime (lm->timerfd, 0, &lm->disarm, NULL) < 0)
                     {
-                        DBG ("timerfd: %s", strerror (errno));
-                    }                    
+                        err = memif_syscall_error_handler (errno);
+                        goto error;
+                    }
                 }
                 else
                 {
-                    DBG ("%s", strerror (errno));
-                    if (sockfd > 0)
-                        close (sockfd);
-                    sockfd = -1;
+                    err = memif_syscall_error_handler (errno);
+                    goto error;
                 }
             }
     }
     else
     {
-            conn = lm->conn;
-            if (conn->fd == fd)
+        conn = lm->conn;
+        if (conn->fd == fd)
+        {
+            if (events & MEMIF_FD_EVENT_READ)
             {
-                if (events & MEMIF_FD_EVENT_READ)
-                    conn->read_fn (conn);
-                if (events & MEMIF_FD_EVENT_WRITE)
-                    conn->write_fn (conn);
-                if (events & MEMIF_FD_EVENT_ERROR)
-                    conn->error_fn (conn);
+                err = conn->read_fn (conn);
+                if (err != MEMIF_ERR_SUCCESS)
+                    return err;
             }
+            if (events & MEMIF_FD_EVENT_WRITE)
+            {
+                err = conn->write_fn (conn);
+                if (err != MEMIF_ERR_SUCCESS)
+                    return err;
+            }
+            if (events & MEMIF_FD_EVENT_ERROR)
+            {
+                err = conn->error_fn (conn);
+                if (err != MEMIF_ERR_SUCCESS)
+                    return err;
+            }
+        }
     }
-    return 0;
+
+    return MEMIF_ERR_SUCCESS; /* 0 */
+
+error:
+    if (sockfd > 0)
+        close (sockfd);
+    sockfd = -1;
+    return err;
 }
 
 static void
@@ -416,15 +532,16 @@ memif_disconnect_internal (memif_connection_t *c)
     if (c == NULL)
     {
         DBG ("no connection");
-        return -1;
+        return MEMIF_ERR_NOCONN;
     }
+
+    int err = MEMIF_ERR_SUCCESS; /* 0 */
 
     libmemif_main_t *lm = &libmemif_main;
 
-    memif_msg_send_disconnect (c, c->remote_disconnect_string, 1);
-
     if (c->fd > 0)
     {
+        memif_msg_send_disconnect (c, c->remote_disconnect_string, 1);
         lm->control_fd_update (c->fd, MEMIF_FD_EVENT_DEL);
         close (c->fd);
     }
@@ -458,7 +575,7 @@ memif_disconnect_internal (memif_connection_t *c)
     if (c->regions != NULL)
     {
         if (munmap (c->regions->shm, c->regions->region_size) < 0)
-            DBG ("munmap: %s", strerror (errno));
+            return memif_syscall_error_handler (errno);
         if (c->regions->fd > 0)
             close (c->regions->fd);
         c->regions->fd = -1;
@@ -472,12 +589,13 @@ memif_disconnect_internal (memif_connection_t *c)
         only arm if timer is disarmed */
     if (timerfd_settime (lm->timerfd, 0, &lm->arm, NULL) < 0)
     {
-        DBG ("timerfd: %s", strerror (errno));
+        err = memif_syscall_error_handler (errno);
+        DBG_UNIX ("timerfd_settime: arm"); 
     }
 
     c->on_disconnect ((void *) c, c->private_ctx);
 
-    return 0;
+    return err;
 }
 
 int
@@ -485,15 +603,18 @@ memif_delete (memif_conn_handle_t *conn)
 {
     memif_connection_t *c = (memif_connection_t *) *conn;
     libmemif_main_t *lm = &libmemif_main;
+    
+    int err;
 
-    /* only fail if there is no connection to remove */
-    if (memif_disconnect_internal (c) < 0)
-        return -1;
+    err = memif_disconnect_internal (c);
+    if (err == MEMIF_ERR_NOCONN)
+        return err;
 
     /* TODO: only disarm if this is the only disconnected slave */
     if (timerfd_settime (lm->timerfd, 0, &lm->disarm, NULL) < 0)
     {
-        DBG ("timerfd: %s", strerror (errno));
+        err = memif_syscall_error_handler (errno);
+        DBG ("timerfd_settime: disarm");
     }
 
     if (c->args.socket_filename)
@@ -504,9 +625,8 @@ memif_delete (memif_conn_handle_t *conn)
     c = NULL;
 
     *conn = c;
-    return 0;
+    return err;
 }
-
 
 int
 memif_connect1 (memif_connection_t *c)
@@ -520,11 +640,13 @@ memif_connect1 (memif_connection_t *c)
         if (!mr->shm)
         {
             if (mr->fd < 0)
-                error_return ("no memory region fd");
+                return MEMIF_ERR_NO_SHMFD;
 
             if ((mr->shm = mmap (NULL, mr->region_size, PROT_READ | PROT_WRITE,
                      MAP_SHARED, mr->fd, 0)) == MAP_FAILED)
-            error_return_unix ("mmap");
+            {
+                return memif_syscall_error_handler (errno);
+            }
         }
     }
 
@@ -535,8 +657,10 @@ memif_connect1 (memif_connection_t *c)
     {
         mq->ring = c->regions->shm + mq->offset;
         if (mq->ring->cookie != MEMIF_COOKIE)
-              error_return ("wrong cookie on tx ring %u", i);
-        i++;
+        {
+            DBG ("wrong cookie on tx ring %u", i);
+            return MEMIF_ERR_COOKIE;
+        }
     }
     i = 0;
     mq = c->rx_queues;
@@ -544,10 +668,13 @@ memif_connect1 (memif_connection_t *c)
     {
         mq->ring = c->regions->shm + mq->offset;
         if (mq->ring->cookie != MEMIF_COOKIE)
-            error_return ("wrong cookie on tx ring %u", i);
-        i++;
+        {
+            DBG ("wrong cookie on rx ring %u", i);
+            return MEMIF_ERR_COOKIE;
+        }
     }
 
+    /* callback */
     lm->control_fd_update (c->fd, MEMIF_FD_EVENT_READ | MEMIF_FD_EVENT_MOD);
 
     return 0;
@@ -562,6 +689,8 @@ memif_init_regions_and_queues (memif_connection_t *conn)
     int i,j;
 
     conn->regions = (memif_region_t *) malloc (sizeof (memif_region_t));
+    if (conn->regions == NULL)
+        return memif_syscall_error_handler (errno);
     r = conn->regions;
 
     buffer_offset = (conn->args.num_s2m_rings + conn->args.num_m2s_rings) *
@@ -573,17 +702,17 @@ memif_init_regions_and_queues (memif_connection_t *conn)
         (conn->args.num_s2m_rings + conn->args.num_m2s_rings);
     
     if ((r->fd = memfd_create ("memif region 0", MFD_ALLOW_SEALING)) == -1)
-        error_return_unix ("memfd_create: %s", strerror (errno));
+        return memif_syscall_error_handler (errno);
 
     if ((fcntl (r->fd, F_ADD_SEALS, F_SEAL_SHRINK)) == -1)
-        error_return_unix ("fcntl: %s", strerror (errno));
+        return memif_syscall_error_handler (errno);
 
     if ((ftruncate (r->fd, r->region_size)) == -1)
-        error_return_unix ("ftruncate: %s", strerror (errno));
+        return memif_syscall_error_handler (errno);
 
     if ((r->shm = mmap (NULL, r->region_size, PROT_READ | PROT_WRITE,
                         MAP_SHARED, r->fd, 0)) == MAP_FAILED)
-        error_return_unix ("mmap: %s", strerror (errno));
+        return memif_syscall_error_handler (errno);
 
     for (i = 0; i < conn->args.num_s2m_rings; i++)
     {
@@ -619,7 +748,7 @@ memif_init_regions_and_queues (memif_connection_t *conn)
     {
         mq = (memif_queue_t *) malloc (sizeof (memif_queue_t));
         if ((mq->int_fd = eventfd (0, EFD_NONBLOCK)) < 0)
-            error_return_unix ("eventfd: %s", strerror (errno));
+            return memif_syscall_error_handler (errno);
         mq->ring = memif_get_ring (conn, MEMIF_RING_S2M, x);
         mq->log2_ring_size = conn->args.log2_ring_size;
         mq->region = 0;
@@ -632,7 +761,7 @@ memif_init_regions_and_queues (memif_connection_t *conn)
     {
         mq = (memif_queue_t *) malloc (sizeof (memif_queue_t));
         if ((mq->int_fd = eventfd (0, EFD_NONBLOCK)) < 0)
-            error_return_unix ("eventfd: %s", strerror (errno));
+            return memif_syscall_error_handler (errno);
         mq->ring = memif_get_ring (conn, MEMIF_RING_M2S, x);
         mq->log2_ring_size = conn->args.log2_ring_size;
         mq->region = 0;
@@ -647,14 +776,20 @@ memif_init_regions_and_queues (memif_connection_t *conn)
 
 int
 memif_buffer_alloc (memif_conn_handle_t conn, uint16_t qid,
-                    memif_buffer_t **bufs, uint16_t count)
+                    memif_buffer_t **bufs, uint16_t count, uint16_t *count_out)
 {
     memif_connection_t *c = (memif_connection_t *) conn;
+    if (c == NULL)
+        return MEMIF_ERR_NOCONN;
+    if (c->fd < 0)
+        return MEMIF_ERR_DISCONNECTED;
     memif_queue_t *mq = c->tx_queues;
     memif_ring_t *ring = mq->ring;
     memif_buffer_t *b0, *b1;
     uint16_t mask = (1 << mq->log2_ring_size) - 1;
-    uint16_t i = 0, s0, s1, ns;
+    uint16_t s0, s1, ns;
+    *count_out = 0;
+    int err = MEMIF_ERR_SUCCESS; /* 0 */
 
     if (ring->tail != ring->head)
     {
@@ -666,18 +801,22 @@ memif_buffer_alloc (memif_conn_handle_t conn, uint16_t qid,
     else
         ns = (1 << mq->log2_ring_size);
 
-    /* if head == tail receive function will asume that no packets are available */
+    /* (head == tail) ? receive function will asume that no packets are available */
     ns -= 1;
 
     while (count && ns)
     {
         while ((count > 2) && (ns > 2))
         {
-            s0 = (ring->head + mq->alloc_bufs + i) & mask;
-            s1 = (ring->head + mq->alloc_bufs + i + 1) & mask;
+            s0 = (ring->head + mq->alloc_bufs + *count_out) & mask;
+            s1 = (ring->head + mq->alloc_bufs + *count_out + 1) & mask;
 
             b0 = (memif_buffer_t *) malloc (sizeof (memif_buffer_t));
+            if (b0 == NULL)
+                return memif_syscall_error_handler (errno);
             b1 = (memif_buffer_t *) malloc (sizeof (memif_buffer_t));
+            if (b1 == NULL)
+                return memif_syscall_error_handler (errno);
 
             b0->desc_index = s0;
             b1->desc_index = s1;
@@ -687,102 +826,118 @@ memif_buffer_alloc (memif_conn_handle_t conn, uint16_t qid,
             b0->data = c->regions->shm + ring->desc[s0].offset;
             b1->data = c->regions->shm + ring->desc[s1].offset;
 
-            (*(bufs + i)) = b0;
-            (*(bufs + i + 1)) = b1;
+            (*(bufs + *count_out)) = b0;
+            (*(bufs + *count_out + 1)) = b1;
             DBG ("allocated ring slots %u, %u", s0, s1);
             count -= 2;
             ns -= 2;
-            i += 2;
+            *count_out += 2;
         }
-        s0 = (ring->head + mq->alloc_bufs + i) & mask;
+        s0 = (ring->head + mq->alloc_bufs + *count_out) & mask;
 
         b0 = (memif_buffer_t *) malloc (sizeof (memif_buffer_t));
+        if (b0 == NULL)
+            return memif_syscall_error_handler (errno);
 
         b0->desc_index = s0;
         b0->buffer_len = ring->desc[s0].buffer_length;
         b0->data = c->regions->shm + ring->desc[s0].offset;
 
-        (*(bufs + i)) = b0;
+        (*(bufs + *count_out)) = b0;
         DBG ("allocated ring slot %u", s0);
         count--;
         ns--;
-        i++;
+        *count_out += 1;
     }
 
-    mq->alloc_bufs += i;
+    mq->alloc_bufs += *count_out;
 
-    DBG ("allocated: %u/%u bufs. Total %u allocated bufs", i, count, mq->alloc_bufs);
+    DBG ("allocated: %u/%u bufs. Total %u allocated bufs", *count_out, count, mq->alloc_bufs);
 
     if (count)
+    {
         DBG ("ring buffer full! qid: %u", qid);
+        err = MEMIF_ERR_NOBUF_RING;
+    }
 
-    return i;
+    return err;
 }
 
 int
 memif_buffer_free (memif_conn_handle_t conn, uint16_t qid,
-                   memif_buffer_t **bufs, uint16_t count)
+                   memif_buffer_t **bufs, uint16_t count, uint16_t *count_out)
 {
     memif_connection_t *c = (memif_connection_t *) conn;
+    if (c == NULL)
+        return MEMIF_ERR_NOCONN;
+    if (c->fd < 0)
+        return MEMIF_ERR_DISCONNECTED;
+    libmemif_main_t *lm = &libmemif_main;
     memif_queue_t *mq = c->rx_queues;
     memif_ring_t *ring = mq->ring;
     uint16_t tail = ring->tail;
     uint16_t mask = (1 << mq->log2_ring_size) - 1;
-    int i = 0;
     memif_buffer_t *b0, *b1;
+    *count_out = 0;
+
+    if (mq->alloc_bufs < count)
+        count = mq->alloc_bufs;
 
     while (count)
     {
         while (count > 2)
         {
-            b0 = (*(bufs + i));
-            b1 = (*(bufs + i + 1));
+            b0 = (*(bufs + *count_out));
+            b1 = (*(bufs + *count_out + 1));
             tail = (b0->desc_index + 1) & mask;
             tail = (b1->desc_index + 1) & mask;
             b0->data = NULL;
             b1->data = NULL;
             free (b0);
             free (b1);
-            (*(bufs + i)) = b0 = NULL;
-            (*(bufs + i + 1)) = b1 = NULL;
-
+            (*(bufs + *count_out)) = b0 = NULL;
+            (*(bufs + *count_out + 1)) = b1 = NULL;
 
             count -= 2;
-            i += 2;
+            *count_out += 2;
         }
-        b0 = (*(bufs + i));
+        b0 = (*(bufs + *count_out));
         tail = (b0->desc_index + 1) & mask;
         b0->data = NULL;
         free (b0);
-        (*(bufs + i)) = b0 = NULL;
+        (*(bufs + *count_out)) = b0 = NULL;
 
         count--;
-        i++;
+        *count_out += 1;
     }
 
     ring->tail = tail;
         
-    return i;
+    return MEMIF_ERR_SUCCESS; /* 0 */
 }
 
 int
 memif_tx_burst (memif_conn_handle_t conn, uint16_t qid,
-                memif_buffer_t **bufs, uint16_t count)
+                memif_buffer_t **bufs, uint16_t count, uint16_t *tx)
 {
     memif_connection_t *c = (memif_connection_t *) conn;
+    if (c == NULL)
+        return MEMIF_ERR_NOCONN;
+    if (c->fd < 0)
+        return MEMIF_ERR_DISCONNECTED;
     memif_queue_t *mq = c->tx_queues;
     memif_ring_t *ring = mq->ring;
     uint16_t head = ring->head;
     uint16_t mask = (1 << mq->log2_ring_size) - 1;
-    uint16_t tx = 0;
+    *tx = 0;
     memif_buffer_t *b0, *b1;
 
     while (count)
     {
         while (count > 2)
         {
-            b0 = (*(bufs + tx));
-            b1 = (*(bufs + tx + 1));
+            b0 = (*(bufs + *tx));
+            b1 = (*(bufs + *tx + 1));
             ring->desc[b0->desc_index].length = b0->data_len;
             ring->desc[b1->desc_index].length = b1->data_len;
 
@@ -800,10 +955,10 @@ memif_tx_burst (memif_conn_handle_t conn, uint16_t qid,
             b1->data_len = 0;
 
             count -= 2;
-            tx += 2;
+            *tx += 2;
         }
 
-        b0 = (*(bufs + tx));
+        b0 = (*(bufs + *tx));
         ring->desc[b0->desc_index].length = b0->data_len;
 
 #ifdef MEMIF_DBG_SHM
@@ -816,34 +971,39 @@ memif_tx_burst (memif_conn_handle_t conn, uint16_t qid,
         b0->data_len = 0;
 
         count--;
-        tx++;
+        *tx += 1;
     }
     ring->head = head;
 
-    mq->alloc_bufs -= tx;
+    mq->alloc_bufs -= *tx;
 
     if ((ring->flags & MEMIF_RING_FLAG_MASK_INT) == 0)
     {
         uint64_t a = 1;
         int r = write (mq->int_fd, &a, sizeof (a));
         if (r < 0)
-            error_return ("write: %s fd %d", strerror (errno), mq->int_fd);
+            return MEMIF_ERR_INT_WRITE;
     }
 
-    return tx;
+    return MEMIF_ERR_SUCCESS; /* 0 */
 }
 
 int
 memif_rx_burst (memif_conn_handle_t conn, uint16_t qid,
-                memif_buffer_t **bufs, uint16_t count)
+                memif_buffer_t **bufs, uint16_t count, uint16_t *rx)
 {
     memif_connection_t *c = (memif_connection_t *) conn;
+    if (c == NULL)
+        return MEMIF_ERR_NOCONN;
+    if (c->fd < 0)
+        return MEMIF_ERR_DISCONNECTED;
     memif_queue_t *mq = c->rx_queues;
     memif_ring_t *ring = mq->ring;
     uint16_t head = ring->head;
-    uint16_t ns, rx = 0;
+    uint16_t ns;
     uint16_t mask = (1 << mq->log2_ring_size) - 1;
     memif_buffer_t *b0, *b1;
+    *rx = 0;
 
     if (head == mq->last_head)
         return 0;
@@ -858,7 +1018,11 @@ memif_rx_burst (memif_conn_handle_t conn, uint16_t qid,
         while ((ns > 2) && (count > 2))
         {
             b0 = (memif_buffer_t *) malloc (sizeof (memif_buffer_t));
+            if (b0 == NULL)
+                return memif_syscall_error_handler (errno);
             b1 = (memif_buffer_t *) malloc (sizeof (memif_buffer_t));
+            if (b1 == NULL)
+                return memif_syscall_error_handler (errno);
 
             b0->desc_index = mq->last_head;
             b1->desc_index = mq->last_head + 1;
@@ -869,8 +1033,8 @@ memif_rx_burst (memif_conn_handle_t conn, uint16_t qid,
             b0->buffer_len = ring->desc[mq->last_head].buffer_length;
             b1->buffer_len = ring->desc[mq->last_head + 1].buffer_length;
 
-            (*(bufs + rx)) = b0;
-            (*(bufs + rx + 1)) = b1;
+            (*(bufs + *rx)) = b0;
+            (*(bufs + *rx + 1)) = b1;
 
 #ifdef MEMIF_DBG_SHM
             print_bytes (b0->data , b0->data_len, DBG_RX_BUF);
@@ -881,16 +1045,18 @@ memif_rx_burst (memif_conn_handle_t conn, uint16_t qid,
 
             ns -= 2;
             count -= 2;
-            rx += 2;
+            *rx += 2;
         }
         b0 = (memif_buffer_t *) malloc (sizeof (memif_buffer_t));
+        if (b0 == NULL)
+            return memif_syscall_error_handler (errno);
 
         b0->desc_index = mq->last_head;
         b0->data = memif_get_buffer (conn, ring, mq->last_head);
         b0->data_len = ring->desc[mq->last_head].length;
         b0->buffer_len = ring->desc[mq->last_head].buffer_length;
 
-        (*(bufs + rx)) = b0;
+        (*(bufs + *rx)) = b0;
 
 #ifdef MEMIF_DBG_SHM
         print_bytes (b0->data , b0->data_len, DBG_RX_BUF);
@@ -900,22 +1066,33 @@ memif_rx_burst (memif_conn_handle_t conn, uint16_t qid,
 
         ns--;
         count--;
-        rx++;
+        *rx += 1;
     }
+
+    mq->alloc_bufs += *rx;
 
     if (ns)
     {
-        DBG ("ring buffer full");
+        DBG ("not enough buffers!");
+        return MEMIF_ERR_NOBUF;
     }
 
-    return rx;
+    return MEMIF_ERR_SUCCESS; /* 0 */
 }
 
 int
-memif_get_queue_efd (memif_conn_handle_t conn, uint16_t qid)
+memif_get_queue_efd (memif_conn_handle_t conn, uint16_t qid, int *efd)
 {
     memif_connection_t *c = (memif_connection_t *) conn;
-    return c->rx_queues->int_fd;
+    if (c == NULL)
+    {
+        *efd = -1;
+        return MEMIF_ERR_NOCONN;
+    }
+    if (c->fd < 0)
+        return MEMIF_ERR_DISCONNECTED;
+    *efd = c->rx_queues->int_fd;
+    return MEMIF_ERR_SUCCESS; /* 0 */
 }
 
 memif_details_t

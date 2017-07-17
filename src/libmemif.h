@@ -24,6 +24,48 @@
 
 #include <memif.h>
 
+/* error codes */
+typedef enum
+{
+    MEMIF_ERR_SUCCESS = 0,          /* success */
+/* SYSCALL ERRORS */
+    MEMIF_ERR_SYSCALL,              /* other syscall error */
+    MEMIF_ERR_ACCES,                /* permission denied */
+    MEMIF_ERR_FILE_LIMIT,           /* system open file limit */
+    MEMIF_ERR_PROC_FILE_LIMIT,      /* process open file limit */
+    MEMIF_ERR_ALREADY,              /* connection already requested */
+    MEMIF_ERR_AGAIN,                /* fd is not socket, or operation would block */
+    MEMIF_ERR_BAD_FD,               /* invalid fd */
+    MEMIF_ERR_NOMEM,                /* out of memory */
+/* LIBMEMIF ERRORS */
+    MEMIF_ERR_INVAL_ARG,            /* invalid argument */
+    MEMIF_ERR_NOCONN,               /* handle points to no connection */
+    MEMIF_ERR_CONN,                 /* handle points to existing connection */
+    MEMIF_ERR_CB_FDUPDATE,          /* user defined callback memif_control_fd_update_t error */
+    MEMIF_ERR_FILE_NOT_SOCK,        /* file specified by socket filename 
+                                       exists, but it's not socket */
+    MEMIF_ERR_NO_SHMFD,             /* missing shm fd */
+    MEMIF_ERR_COOKIE,               /* wrong cookie on ring */
+    MEMIF_ERR_NOBUF_RING,           /* ring buffer full */
+    MEMIF_ERR_NOBUF,                /* not enough memif buffers */
+    MEMIF_ERR_INT_WRITE,            /* send interrupt error */
+    MEMIF_ERR_MFMSG,                /* malformed msg received */
+/* MEMIF PROTO ERRORS */
+    MEMIF_ERR_PROTO,                /* incompatible protocol version */
+    MEMIF_ERR_ID,                   /* unmatched interface id */
+    MEMIF_ERR_ACCSLAVE,             /* slave cannot accept connection requests */
+    MEMIF_ERR_ALRCONN,              /* memif is already connected */
+    MEMIF_ERR_MODE,                 /* mode mismatch */
+    MEMIF_ERR_SECRET,               /* secret mismatch */
+    MEMIF_ERR_NOSECRET,             /* secret required */
+    MEMIF_ERR_MAXREG,               /* max region limit reached */
+    MEMIF_ERR_MAXRING,              /* max ring limit reached */
+    MEMIF_ERR_NO_INTFD,             /* missing interrupt fd */
+    MEMIF_ERR_DISCONNECT,           /* disconenct received */
+    MEMIF_ERR_DISCONNECTED,         /* peer interface disconnected */
+    MEMIF_ERR_UNKNOWN_MSG,          /* unknown message type */
+} memif_err_t;                                                                                   
+
 /* types of events that need to be watched for specific fd */
 /* user needs to set events that occured on fd and pass them to memif_control_fd_handler */
 #define MEMIF_FD_EVENT_READ  (1 << 0)
@@ -102,11 +144,19 @@ typedef struct
     uint8_t link_up_down; /* 1 = up, 0 = down */
 } memif_details_t;
 
+char *memif_strerror (int err_code);
 
 memif_details_t memif_get_details (memif_conn_handle_t conn);
 
 /** \brief Memif initialization
     @param on_control_fd_update - if control fd updates inform user to watch new fd
+
+    return
+        MEMIF_ERR_SUCCESS           - no error
+        MEMIF_ERR_SYSCALL           - unspecified syscall error (compile with -DMEMIF_DBG)
+        MEMIF_ERR_FILE_LIMIT        - system open file limit reached
+        MEMIF_ERR_PROC_FILE_LIMIT   - process open file limit reached
+        MEMIF_ERR_BAD_FD            - invalid fd
 
     initialize internal libmemif structures. create timerfd (used to periodically request connection by
     disconnected memifs in slave mode, with no additional API call). this fd is passed to user with memif_control_fd_update_t
@@ -122,6 +172,20 @@ int memif_init (memif_control_fd_update_t *on_control_fd_update);
     @param private_ctx - private contex passed back to user with callback
 
     creates memory interface.
+
+    return
+        MEMIF_ERR_SUCCESS           - no error
+        MEMIF_ERR_SYSCALL           - unspecified syscall error (compile with -DMEMIF_DBG)
+        MEMIF_ERR_ACCES             - permission denied
+        MEMIF_ERR_FILE_LIMIT        - system open file limit reached
+        MEMIF_ERR_PROC_FILE_LIMIT   - process open file limit reached
+        MEMIF_ERR_AGAIN             - fd is not socket, or operation would block
+        MEMIF_ERR_BAD_FD            - invalid fd
+        MEMIF_ERR_NOMEM             - out of memory
+        TODO: MEMIF_ERR_INVAL_ARG   - invalid argument
+        MEMIF_ERR_CONN              - connection already exists on this handle
+        MEMIF_ERR_FILE_NOT_SOCK     - file specified by socket filename exists,
+                                      but it's not a socket
 
     slave-mode
         start timer that will send events to timerfd. if this fd is passed to memif_control_fd_handler
@@ -142,6 +206,18 @@ int memif_create (memif_conn_handle_t * conn, memif_conn_args_t * args, memif_co
     if event occures on any control fd, call memif_control_fd_handler
     internal - lib will "identify" fd (timerfd, lsitener, control) and handle event accordingly
 
+    return
+        MEMIF_ERR_SUCCESS           - no error
+        MEMIF_ERR_SYSCALL           - unspecified syscall error (compile with -DMEMIF_DBG)
+        MEMIF_ERR_ACCES             - permission denied
+        MEMIF_ERR_FILE_LIMIT        - system open file limit reached
+        MEMIF_ERR_PROC_FILE_LIMIT   - process open file limit reached
+        MEMIF_ERR_AGAIN             - fd is not socket, or operation would block
+        MEMIF_ERR_BAD_FD            - invalid fd
+        MEMIF_ERR_NOMEM             - out of memory
+        MEMIF_ERR_NO_SHMFD          - missing shared memory fd
+        MEMIF_ERR_COOKIE            - invalid cookie on ring
+
     fd type
         timerfd
             every disconnected memif in slave mode will request connection
@@ -155,29 +231,39 @@ int memif_control_fd_handler (int fd, uint8_t events);
 /** \brief Memif get queue event file descriptor
     @param conn - memif connection handle
     @param qid - number identifying queue
+    @param efd - return interrupt fd for memif queue specified by qid
 
-    return interrupt fd for memif queue specified by qid
+    rerurn
+        MEMIF_ERR_SUCCESS - no error
+        MEMIF_ERR_NOCONN - handle points to NULL
 */
-int memif_get_queue_efd (memif_conn_handle_t conn, uint16_t qid);
+int memif_get_queue_efd (memif_conn_handle_t conn, uint16_t qid, int *efd);
 
 /** \brief Memif delete
     @param conn - memif connection handle
+
+    return
+        MEMIF_ERR_SUCCESS           - no error
+        MEMIF_ERR_NOCONN            - handle points to NULL
+        MEMIF_ERR_SYSCALL           - unspecified syscall error (compile with -DMEMIF_DBG)
+        MEMIF_ERR_BAD_FD            - invalid fd
 
     disconnect session (free queues and regions, close file descriptors, unmap shared memory)
     set connection handle to NULL, to avoid possible double free
 */
 int memif_delete (memif_conn_handle_t *conn);
 
+
 int memif_buffer_alloc (memif_conn_handle_t conn, uint16_t qid,
-                        memif_buffer_t **bufs, uint16_t count);
+                        memif_buffer_t **bufs, uint16_t count, uint16_t *count_out);
 
 int memif_buffer_free (memif_conn_handle_t conn, uint16_t qid,
-                       memif_buffer_t **bufs, uint16_t count);
+                       memif_buffer_t **bufs, uint16_t count, uint16_t *count_out);
 
 int memif_tx_burst (memif_conn_handle_t conn, uint16_t qid,
-                    memif_buffer_t **bufs, uint16_t count);
+                    memif_buffer_t **bufs, uint16_t count, uint16_t *tx);
 
 int memif_rx_burst (memif_conn_handle_t conn, uint16_t qid,
-                    memif_buffer_t **bufs, uint16_t count);
+                    memif_buffer_t **bufs, uint16_t count, uint16_t *rx);
 
 #endif /* _LIBMEMIF_H_ */
