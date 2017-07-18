@@ -111,6 +111,7 @@ print_memif_details ()
     memset (&md, 0, sizeof (md));
     ssize_t buflen = 2048;
     char *buf = malloc (buflen);
+    memset (buf, 0, buflen);
     int err;
 
     err = memif_get_details (c->conn, &md, buf, buflen);
@@ -118,7 +119,10 @@ print_memif_details ()
     {
         INFO ("%s", memif_strerror (err));
         if (err == MEMIF_ERR_NOCONN)
+        {
+            free (buf);
             return;
+        }
     }
 
     printf ("\tinterface name: %s\n",(char *) md.if_name);
@@ -158,6 +162,8 @@ print_memif_details ()
         printf ("up\n");
     else
         printf ("down\n");
+
+    free (buf);
 }
 
 int
@@ -226,14 +232,13 @@ del_epoll_fd (int fd)
 int
 on_connect (memif_conn_handle_t conn, void *private_ctx)
 {
+    memif_connection_t *c = &memif_connection;
     INFO ("memif connected!");
-    int_fd_t *ifd = (int_fd_t *) malloc (sizeof (int_fd_t));
     int err;
-    err = memif_get_queue_efd ((&memif_connection)->conn, 0, &ifd->fd);
+    err = memif_get_queue_efd (c->conn, 0, &c->int_fd->fd);
     INFO ("memif_get_queue_efd: %s", memif_strerror (err));
-    ifd->qid = 0;
-    (&memif_connection)->int_fd = ifd;
-    return add_epoll_fd (ifd->fd, EPOLLIN);
+    c->int_fd->qid = 0;
+    return add_epoll_fd (c->int_fd->fd, EPOLLIN);
 }
 
 /* informs user about disconnected status. private_ctx is used by user to identify connection
@@ -353,14 +358,11 @@ int
 icmpr_free ()
 {
     memif_connection_t *c = &memif_connection;
-    if (c->int_fd != NULL)
-        free (c->int_fd);
+    free (c->int_fd);
     c->int_fd = NULL;
-    if (c->tx_bufs != NULL)
-        free (c->tx_bufs);
+    free (c->tx_bufs);
     c->tx_bufs = NULL;
-    if (c->rx_bufs)
-        free (c->rx_bufs);
+    free (c->rx_bufs);
     c->rx_bufs = NULL;
 
     return 0;
@@ -369,14 +371,14 @@ icmpr_free ()
 int
 user_input_handler ()
 {
-    char *ui = (char *) malloc (256);
-    char *r = fgets (ui, 256, stdin);
-    if (ui[0] == '\n')
-        return 0;
-    ui = strtok (ui, " ");
+    char *in = (char *) malloc (256);
+    char *ui = fgets (in, 256, stdin);
+    if (in[0] == '\n')
+        goto done;
+    ui = strtok (in, " ");
     if (strncmp (ui, "exit", 4) == 0)
     {
-        free (ui);
+        free (in);
         icmpr_memif_delete ();
         icmpr_free ();
         exit (EXIT_SUCCESS);
@@ -384,24 +386,32 @@ user_input_handler ()
     else if (strncmp (ui, "help", 4) == 0)
     {
         print_help ();
-        return 0;
+        goto done;
     }
     else if (strncmp (ui, "conn", 4) == 0)
     {
         icmpr_memif_create (0);
-        return 0;
+        goto done;
     }
     else if (strncmp (ui, "del", 3) == 0)
     {
         icmpr_memif_delete ();
-        return 0;
+        goto done;
     }
     else if (strncmp (ui, "show", 4) == 0)
     {
         print_memif_details ();
+        goto done;
     }
     else
+    {
         DBG ("unknown command: %s", ui);
+        goto done;
+    }
+
+    return 0;
+done:
+    free (in);
     return 0;
 }
 
@@ -456,7 +466,8 @@ poll_event (int timeout)
     memset (&evt, 0, sizeof (evt));
     evt.events = EPOLLIN | EPOLLOUT;
     sigset_t sigset;
-    en = epoll_pwait (epfd, &evt, 1, timeout, 0);
+    sigemptyset (&sigset);
+    en = epoll_pwait (epfd, &evt, 1, timeout, &sigset);
     if (en < 0)
     {
         DBG ("epoll_pwait: %s", strerror (errno));

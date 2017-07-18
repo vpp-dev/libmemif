@@ -270,6 +270,7 @@ memif_create (memif_conn_handle_t *c, memif_conn_args_t *args,
         err = memif_syscall_error_handler (errno);
         goto error;
     }
+    memset (conn, 0, sizeof (memif_connection_t));
 
     libmemif_main_t *lm = &libmemif_main;
 
@@ -300,10 +301,13 @@ memif_create (memif_conn_handle_t *c, memif_conn_args_t *args,
     l = strlen ((char *) args->instance_name);
     strncpy ((char *) conn->args.instance_name, (char *) args->instance_name, l);
 
+    /* allocate and initialize socket_filename so it can be copyed to sun_path
+        without memory leaks */
+    conn->args.socket_filename = malloc (sizeof (char *) * 108);
+    memset (conn->args.socket_filename, 0, 108 * sizeof (char *));
+
     if (args->socket_filename)
     {
-        conn->args.socket_filename = (uint8_t *) malloc (
-                    strlen ((char *) args->socket_filename));
         if (conn->args.socket_filename == NULL)
             {
                 err = memif_syscall_error_handler (errno);
@@ -316,7 +320,6 @@ memif_create (memif_conn_handle_t *c, memif_conn_args_t *args,
     {
         uint16_t sdl = strlen (MEMIF_DEFAULT_SOCKET_DIR);
         uint16_t sfl = strlen (MEMIF_DEFAULT_SOCKET_FILENAME);
-        conn->args.socket_filename = (uint8_t *) malloc (sdl + sfl + 1);
         if (conn->args.socket_filename == NULL)
             {
                 err = memif_syscall_error_handler (errno);
@@ -458,8 +461,9 @@ memif_control_fd_handler (int fd, uint8_t events)
                 }
 
                 sun.sun_family = AF_UNIX;
+
                 strncpy (sun.sun_path, conn->args.socket_filename,
-                            sizeof (sun.sun_path) -1);
+                            sizeof (sun.sun_path) - 1);
 
                 if (connect (sockfd, (struct sockaddr *) &sun,
                         sizeof (struct sockaddr_un)) == 0)
@@ -709,8 +713,10 @@ memif_init_regions_and_queues (memif_connection_t *conn)
     if ((r->fd = memfd_create ("memif region 0", MFD_ALLOW_SEALING)) == -1)
         return memif_syscall_error_handler (errno);
 
+/*
     if ((fcntl (r->fd, F_ADD_SEALS, F_SEAL_SHRINK)) == -1)
         return memif_syscall_error_handler (errno);
+*/
 
     if ((ftruncate (r->fd, r->region_size)) == -1)
         return memif_syscall_error_handler (errno);
