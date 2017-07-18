@@ -31,7 +31,7 @@ unit_test_SOURCES = test/socket_test.c      \
                     src/main.c
 # macro MEMIF_UNIT_TEST -> compile functions without static keyword
 # and declare them in header files, so they can be called from unit tests
-unit_test_CPPFLAGS = $(AM_CPPFLAGS) -Itest -Isrc -DMEMIF_UNIT_TEST
+unit_test_CPPFLAGS = $(AM_CPPFLAGS) -Itest -Isrc -DMEMIF_UNIT_TEST -g
 
 #
 # main lib

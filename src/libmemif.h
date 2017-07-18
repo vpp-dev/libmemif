@@ -48,6 +48,7 @@ typedef enum
     MEMIF_ERR_COOKIE,               /* wrong cookie on ring */
     MEMIF_ERR_NOBUF_RING,           /* ring buffer full */
     MEMIF_ERR_NOBUF,                /* not enough memif buffers */
+    MEMIF_ERR_NOBUF_DET,            /* memif details needs larger buffer */
     MEMIF_ERR_INT_WRITE,            /* send interrupt error */
     MEMIF_ERR_MFMSG,                /* malformed msg received */
 /* MEMIF PROTO ERRORS */
@@ -77,6 +78,9 @@ typedef enum
 /* update events */
 #define MEMIF_FD_EVENT_MOD   (1 << 4)
 
+/** *brief Memif connection handle
+    pointer of type void, pointing to internal structure
+*/
 typedef void* memif_conn_handle_t;
 
 /** \brief Memif control file descriptor update (callback function)
@@ -99,10 +103,23 @@ typedef int (memif_control_fd_update_t) (int fd, uint8_t events);
 */
 typedef int (memif_connection_update_t) (memif_conn_handle_t conn, void *private_ctx);
 
+/** \brief Memif connection arguments
+    @param socket_filename - socket filename
+    @param secret - otional parameter used as interface autenthication
+    @param num_s2m_rings - number of slave to master rings
+    @param num_m2s_rings - number of master to slave rings
+    @param buffer_size - size of buffer in shared memory
+    @param log2_ring_size - logarithm base 2 of ring size
+    @param is_master - 0 == master, 1 == slave
+    @param interface_id - id used to identify peer connection
+    @param interface_name - interface name
+    @param instance_name - application name
+    @param mode - 0 == ethernet, 1 == ip , 2 == punt/inject
+*/
 typedef struct
 {
     uint8_t *socket_filename;
-    uint8_t secret[24];
+    uint8_t secret[24]; /* optional */
 
     uint8_t num_s2m_rings;
     uint8_t num_m2s_rings;
@@ -116,6 +133,12 @@ typedef struct
     memif_interface_mode_t  mode:8;
 } memif_conn_args_t;
 
+/** \brief Memif buffer
+    @param desc_index - ring descriptor index
+    @param buffer_len - shared meory buffer length
+    @param data_len - data length
+    @param data - pointer to shared memory data
+*/
 typedef struct
 {
     uint16_t desc_index;
@@ -124,18 +147,34 @@ typedef struct
     void *data;
 } memif_buffer_t;
 
+/** \brief Memif details
+    @param if_name - interface name
+    @param inst_name - application name
+    @param remote_if_name - peer interface name
+    @param remote_inst_name - peer application name
+    @param id - connection id
+    @param secret - secret
+    @param role - 0 = master, 1 = slave
+    @param mode - 0 = ethernet, 1 = ip , 2 = punt/inject
+    @param socket_filename = socket filename
+    @param ring_size - ring size
+    @param buffer_size - size of buffer in shared memory
+    @param rx_queues - number of receive queues
+    @param tx_queues - number of transmit queues
+    @param link_up_down - 1 = up (connected), 2 = down (disconnected)
+*/
 typedef struct
 {
-    uint8_t if_name[32];
-    uint8_t inst_name[32];
-    uint8_t remote_if_name[32];
-    uint8_t remote_inst_name[32];
+    uint8_t *if_name;
+    uint8_t *inst_name;
+    uint8_t *remote_if_name;
+    uint8_t *remote_inst_name;
 
     uint32_t id;
-    uint8_t secret[24]; /* optional */
+    uint8_t *secret; /* optional */
     uint8_t role; /* 0 = master, 1 = slave */
     uint8_t mode; /* 0 = ethernet, 1 = ip, 2 = punt/inject */
-    uint8_t socket_filename[128];
+    uint8_t *socket_filename;
     uint32_t ring_size;
     uint16_t buffer_size;
     uint8_t rx_queues;
@@ -144,9 +183,30 @@ typedef struct
     uint8_t link_up_down; /* 1 = up, 0 = down */
 } memif_details_t;
 
+/** \brief Memif strerror
+    @param - err_code - error code
+
+    converts error code to error message
+    
+    return
+        error string
+*/
 char *memif_strerror (int err_code);
 
-memif_details_t memif_get_details (memif_conn_handle_t conn);
+/** \brief Memif get details
+    @param conn - memif conenction handle
+    @param md - pointer to memif details struct
+    @param buf - buffer containing details strings
+    @param buflen - length of buffer
+
+    return
+        MEMIF_ERR_SUCCESS           - no error
+        MEMIF_ERR_NOCONN            - connection handle points to NULL
+        MEMIF_ERR_NOBUF_DET         - privided buffer is not long enough
+
+*/
+int memif_get_details (memif_conn_handle_t conn, memif_details_t *md,
+                       char *buf, ssize_t buflen);
 
 /** \brief Memif initialization
     @param on_control_fd_update - if control fd updates inform user to watch new fd
@@ -240,7 +300,7 @@ int memif_control_fd_handler (int fd, uint8_t events);
 int memif_get_queue_efd (memif_conn_handle_t conn, uint16_t qid, int *efd);
 
 /** \brief Memif delete
-    @param conn - memif connection handle
+    @param conn - pointer to memif connection handle
 
     return
         MEMIF_ERR_SUCCESS           - no error
@@ -253,17 +313,66 @@ int memif_get_queue_efd (memif_conn_handle_t conn, uint16_t qid, int *efd);
 */
 int memif_delete (memif_conn_handle_t *conn);
 
+/** \brief Memif buffer alloc
+    @param conn - memif conenction handle
+    @param qid - number indentifying queue
+    @param bufs - memif buffers
+    @param count - number of memif buffers to allocate
+    @param count_out - returns number of allocated buffers
 
+    return
+        MEMIF_ERR_SUCCESS           - no error
+        MEMIF_ERR_NOCONN            - handle points to NULL
+        MEMIF_ERR_DISCONNECTED      - not conencted
+        MEMIF_ERR_NOBUF_RING        - ring buffer full
+*/
 int memif_buffer_alloc (memif_conn_handle_t conn, uint16_t qid,
-                        memif_buffer_t **bufs, uint16_t count, uint16_t *count_out);
+                        memif_buffer_t *bufs, uint16_t count, uint16_t *count_out);
 
+/** \brief Memif buffer free
+    @param conn - memif conenction handle
+    @param qid - number indentifying queue
+    @param bufs - memif buffers
+    @param count - number of memif buffers to free
+    @param count_out - returns number of freed buffers
+
+    return
+        MEMIF_ERR_SUCCESS           - no error
+        MEMIF_ERR_NOCONN            - handle points to NULL
+        MEMIF_ERR_DISCONNECTED      - not conencted
+*/
 int memif_buffer_free (memif_conn_handle_t conn, uint16_t qid,
-                       memif_buffer_t **bufs, uint16_t count, uint16_t *count_out);
+                       memif_buffer_t *bufs, uint16_t count, uint16_t *count_out);
 
+/** \brief Memif transmit buffer burst
+    @param conn - memif conenction handle
+    @param qid - number indentifying queue
+    @param bufs - memif buffers
+    @param count - number of memif buffers to transmit
+    @param count_out - returns number of transmitted buffers
+
+    return
+        MEMIF_ERR_SUCCESS           - no error
+        MEMIF_ERR_NOCONN            - handle points to NULL
+        MEMIF_ERR_DISCONNECTED      - not conencted
+*/
 int memif_tx_burst (memif_conn_handle_t conn, uint16_t qid,
-                    memif_buffer_t **bufs, uint16_t count, uint16_t *tx);
+                    memif_buffer_t *bufs, uint16_t count, uint16_t *tx);
 
+/** \brief Memif receive buffer burst
+    @param conn - memif conenction handle
+    @param qid - number indentifying queue
+    @param bufs - memif buffers
+    @param count - number of memif buffers to receive
+    @param count_out - returns number of received buffers
+
+    return
+        MEMIF_ERR_SUCCESS           - no error
+        MEMIF_ERR_NOCONN            - handle points to NULL
+        MEMIF_ERR_DISCONNECTED      - not conencted
+        MEMIF_ERR_NOBUF             - not enough buffers provided
+*/
 int memif_rx_burst (memif_conn_handle_t conn, uint16_t qid,
-                    memif_buffer_t **bufs, uint16_t count, uint16_t *rx);
+                    memif_buffer_t *bufs, uint16_t count, uint16_t *rx);
 
 #endif /* _LIBMEMIF_H_ */

@@ -66,6 +66,8 @@
                     printf ("\n");                                  \
                 } while (0)
 
+#define MAX_MEMIF_BUFS 256
+
 int epfd;
 
 /*
@@ -86,12 +88,12 @@ typedef struct
     /* interrupt file descriptor (specific for each queue) */
     int_fd_t *int_fd;
     /* tx buffers */
-    memif_buffer_t **tx_bufs;
-    /* number of allocated tx buffers */
+    memif_buffer_t *tx_bufs;
+    /* number of tx buffers pointing to shared memory */
     uint16_t tx_buf_num;
     /* rx buffers */
-    memif_buffer_t **rx_bufs;
-    /* number of allocated rx buffers */
+    memif_buffer_t *rx_bufs;
+    /* number of rx buffers pointing to shared memory */
     uint16_t rx_buf_num;
 } memif_connection_t;
 
@@ -104,13 +106,21 @@ print_memif_details ()
     printf ("MEMIF DETAILS\n");
     printf ("==============================\n");
 
-    /* TODO: loop for all connections */
-    if (c->conn == NULL)
+
+    memif_details_t md;
+    memset (&md, 0, sizeof (md));
+    ssize_t buflen = 2048;
+    char *buf = malloc (buflen);
+    int err;
+
+    err = memif_get_details (c->conn, &md, buf, buflen);
+    if (err != MEMIF_ERR_SUCCESS)
     {
-        printf ("no connection!\n");
-        return;
+        INFO ("%s", memif_strerror (err));
+        if (err == MEMIF_ERR_NOCONN)
+            return;
     }
-    memif_details_t md = memif_get_details (c->conn);
+
     printf ("\tinterface name: %s\n",(char *) md.if_name);
     printf ("\tapp name: %s\n",(char *) md.inst_name);
     printf ("\tremote interface name: %s\n",(char *) md.remote_if_name);
@@ -218,7 +228,9 @@ on_connect (memif_conn_handle_t conn, void *private_ctx)
 {
     INFO ("memif connected!");
     int_fd_t *ifd = (int_fd_t *) malloc (sizeof (int_fd_t));
-    ifd->fd = memif_get_queue_efd ((&memif_connection)->conn, 0);
+    int err;
+    err = memif_get_queue_efd ((&memif_connection)->conn, 0, &ifd->fd);
+    INFO ("memif_get_queue_efd: %s", memif_strerror (err));
     ifd->qid = 0;
     (&memif_connection)->int_fd = ifd;
     return add_epoll_fd (ifd->fd, EPOLLIN);
@@ -273,32 +285,18 @@ icmpr_memif_create (int is_master)
     args.interface_id = 0;
     /* last argument for memif_create (void * private_ctx) is used by user
        to identify connection. this context is returned with callbacks */
-    int rv = memif_create (&(&memif_connection)->conn, &args, on_connect, on_disconnect, NULL);
-    if (rv < 0)
-    {
-        DBG ("memif create error!");
-    }
-    else
-    {
-        DBG ("memif created!");
-    }
-    return rv;
+    int err = memif_create (&(&memif_connection)->conn, &args, on_connect, on_disconnect, NULL);
+    INFO ("memif_create: %s", memif_strerror (err));
+    return 0;
 }
 
 int
 icmpr_memif_delete ()
 {
-    int rv = 0;
+    int err;
     /* disconenct then delete memif connection */
-    rv = memif_delete (&(&memif_connection)->conn);
-    if (rv < 0)
-    {
-        DBG ("memif delete error!");
-    }
-    else
-    {
-        DBG ("memif deleted!");
-    }
+    err = memif_delete (&(&memif_connection)->conn);
+    INFO ("memif_delete: %s", memif_strerror (err));
     return 0;
 }
 
@@ -322,18 +320,19 @@ print_help ()
     printf ("\texit - exit app\n");
     printf ("\tconn - create memif (slave-mode)\n");
     printf ("\tdel  - delete memif\n");
-    printf ("\tshow - print memif details\n");
+    printf ("\tshow - show connection details\n");
 }
 
 int
 icmpr_buffer_alloc (long n)
 {
     memif_connection_t *c = &memif_connection;
-    c->tx_bufs = (memif_buffer_t **) malloc (sizeof (memif_buffer_t *) * n);
-    DBG ("call memif_buffer_alloc");
-    int r = memif_buffer_alloc (c->conn, 0, c->tx_bufs, n);
-    DBG ("allocated %d/%ld buffers", r, n);
+    int err;
+    uint16_t r, qid = 0;
+    err = memif_buffer_alloc (c->conn, qid, c->tx_bufs, n, &r);
+    INFO ("memif_buffer_alloc: %s", memif_strerror (err));
     c->tx_buf_num += r;
+    DBG ("allocated %d/%ld buffers, %u free buffers", r, n, MAX_MEMIF_BUFS - c->tx_buf_num);
     return 0;
 }
 
@@ -341,9 +340,29 @@ int
 icmpr_tx_burst ()
 {
     memif_connection_t *c = &memif_connection;
-    int r = memif_tx_burst (c->conn, 0, c->tx_bufs, c->tx_buf_num);
+    int err;
+    uint16_t r, qid = 0;
+    err = memif_tx_burst (c->conn, qid, c->tx_bufs, c->tx_buf_num, &r);
+    INFO ("memif_tx_burst: %s", memif_strerror (err));
     DBG ("tx: %d/%u", r, c->tx_buf_num);
     c->tx_buf_num -= r;
+    return 0;
+}
+
+int
+icmpr_free ()
+{
+    memif_connection_t *c = &memif_connection;
+    if (c->int_fd != NULL)
+        free (c->int_fd);
+    c->int_fd = NULL;
+    if (c->tx_bufs != NULL)
+        free (c->tx_bufs);
+    c->tx_bufs = NULL;
+    if (c->rx_bufs)
+        free (c->rx_bufs);
+    c->rx_bufs = NULL;
+
     return 0;
 }
 
@@ -359,6 +378,7 @@ user_input_handler ()
     {
         free (ui);
         icmpr_memif_delete ();
+        icmpr_free ();
         exit (EXIT_SUCCESS);
     }
     else if (strncmp (ui, "help", 4) == 0)
@@ -389,28 +409,36 @@ int
 icmpr_interrupt (int fd)
 {
     memif_connection_t *c = &memif_connection;
-    DBG ("interrupted!");
+/*    DBG ("interrupted!");
     uint64_t b;
     ssize_t r = read (fd, &b, sizeof (b));
+*/
 
-    int rx = memif_rx_burst (c->conn, 0, c->rx_bufs, c->rx_buf_num);
-    c->rx_buf_num -= rx;
+    int err;
+    uint16_t rx;
+    err = memif_rx_burst (c->conn, 0, c->rx_bufs, MAX_MEMIF_BUFS, &rx);
+    INFO ("memif_rx_burst: %s", memif_strerror (err));
+    c->rx_buf_num += rx;
 
-    DBG ("received %d buffers. %u free buffers", rx, c->rx_buf_num);
+    DBG ("received %d buffers. %u/%u alloc/free buffers",
+                rx, c->rx_buf_num, MAX_MEMIF_BUFS - c->rx_buf_num);
 
     icmpr_buffer_alloc (rx);
     int i;
     for (i = 0; i < rx; i++)
     {
-        resolve_packet ((void *) (*(c->rx_bufs + i))->data,
-                            (*(c->rx_bufs + i))->data_len, (void *) (*(c->tx_bufs + i))->data,
-                            &(*(c->tx_bufs + i))->data_len);
+        resolve_packet ((void *) (c->rx_bufs + i)->data,
+                            (c->rx_bufs + i)->data_len, (void *) (c->tx_bufs + i)->data,
+                            &(c->tx_bufs + i)->data_len);
     }
 
-    int fb = memif_buffer_free (c->conn, 0, c->rx_bufs, rx);
-    c->rx_buf_num += fb;
+    uint16_t fb;
+    err = memif_buffer_free (c->conn, 0, c->rx_bufs, rx, &fb);
+    INFO ("memif_buffer_free: %s", memif_strerror (err));
+    c->rx_buf_num -= fb;
 
-    DBG ("freed %d buffers. %u free buffers", fb, c->rx_buf_num);
+    DBG ("freed %d buffers. %u/%u alloc/free buffers",
+                fb, c->rx_buf_num, MAX_MEMIF_BUFS - c->rx_buf_num);
 
     icmpr_tx_burst ();
 
@@ -452,6 +480,7 @@ poll_event (int timeout)
                 if (evt.events & EPOLLERR)
                     events |= MEMIF_FD_EVENT_ERROR;
                 memif_err = memif_control_fd_handler (evt.data.fd, events);
+                INFO ("memif_control_fd_handler: %s", memif_strerror (memif_err));
             }
         }
         else if (evt.data.fd == 0)
@@ -487,11 +516,16 @@ int main ()
     c->conn = NULL;
     c->int_fd = malloc (sizeof (int_fd_t));
     c->int_fd->fd = -1;
-    c->rx_buf_num = 256;
-    c->rx_bufs = malloc (sizeof (memif_buffer_t *) * c->rx_buf_num);
+    /* alloc memif buffers */
+    c->rx_buf_num = 0;
+    c->rx_bufs = (memif_buffer_t *) malloc (sizeof (memif_buffer_t) * MAX_MEMIF_BUFS);
+    c->tx_buf_num = 0;
+    c->tx_bufs = (memif_buffer_t *) malloc (sizeof (memif_buffer_t) * MAX_MEMIF_BUFS);
 
     /* initialize memory interface */
-    memif_init (control_fd_update);
+    int err;
+    err = memif_init (control_fd_update);
+    INFO ("memif_init: %s", memif_strerror (err));
 
     /* main loop */
     while (1)
