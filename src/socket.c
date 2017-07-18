@@ -77,6 +77,7 @@ memif_msg_enq_ack (memif_connection_t *c)
     if (e == NULL)
         return memif_syscall_error_handler (errno);
 
+    memset (&e->msg, 0, sizeof (e->msg));
     e->msg.type = MEMIF_MSG_TYPE_ACK;
     e->fd = -1;
 
@@ -126,7 +127,9 @@ memif_msg_enq_init (memif_connection_t *c)
         (memif_msg_queue_elt_t *) malloc (sizeof (memif_msg_queue_elt_t));
     if (e == NULL)
         return memif_syscall_error_handler (errno);
-    
+    memset (e, 0, sizeof (memif_msg_queue_elt_t));
+
+    memset (&e->msg, 0, sizeof (e->msg));
     memif_msg_init_t *i = &e->msg.init;
 
     e->msg.type = MEMIF_MSG_TYPE_INIT;
@@ -169,6 +172,7 @@ memif_msg_enq_add_region (memif_connection_t *c, uint8_t region_index)
     if (e == NULL)
         return memif_syscall_error_handler (errno);
 
+    memset (&e->msg, 0, sizeof (e->msg));
     memif_msg_add_region_t *ar = &e->msg.add_region;
 
     e->msg.type = MEMIF_MSG_TYPE_ADD_REGION;
@@ -202,6 +206,7 @@ memif_msg_enq_add_ring (memif_connection_t *c, uint8_t index, uint8_t dir)
     if (e == NULL)
         return memif_syscall_error_handler (errno);
 
+    memset (&e->msg, 0, sizeof (e->msg));
     memif_msg_add_ring_t *ar = &e->msg.add_ring;
 
     e->msg.type = MEMIF_MSG_TYPE_ADD_RING;
@@ -246,6 +251,7 @@ memif_msg_enq_connect (memif_connection_t *c)
     if (e == NULL)
         return memif_syscall_error_handler (errno);
 
+    memset (&e->msg, 0, sizeof (e->msg));
     memif_msg_connect_t *cm = &e->msg.connect;
 
     e->msg.type = MEMIF_MSG_TYPE_CONNECT;
@@ -279,6 +285,7 @@ memif_msg_enq_connected (memif_connection_t *c)
     if (e == NULL)
         return memif_syscall_error_handler (errno);
 
+    memset (&e->msg, 0, sizeof (e->msg));
     memif_msg_connected_t *cm = &e->msg.connected;
     
     e->msg.type = MEMIF_MSG_TYPE_CONNECTED;
