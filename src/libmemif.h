@@ -118,13 +118,13 @@ typedef int (memif_connection_update_t) (memif_conn_handle_t conn, void *private
 */
 typedef struct
 {
-    uint8_t *socket_filename;
-    uint8_t secret[24]; /* optional */
+    uint8_t *socket_filename; /* default = /run/vpp/memif.sock */
+    uint8_t secret[24]; /* optional (interface authentication) */
 
-    uint8_t num_s2m_rings;
-    uint8_t num_m2s_rings;
-    uint16_t buffer_size;
-    memif_log2_ring_size_t log2_ring_size;
+    uint8_t num_s2m_rings; /* default = 1 */
+    uint8_t num_m2s_rings; /* default = 1 */
+    uint16_t buffer_size; /* default = 2048 */
+    memif_log2_ring_size_t log2_ring_size; /* default = 10 (1024) */
     uint8_t is_master;
 
     memif_interface_id_t interface_id;

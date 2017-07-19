@@ -14,7 +14,6 @@
  * limitations under the License.
  *------------------------------------------------------------------
  */
-
 #include <socket_test.h>
 
 
