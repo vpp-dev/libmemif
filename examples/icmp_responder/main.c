@@ -66,6 +66,7 @@
                     printf ("\n");                                  \
                 } while (0)
 
+/* maximum tx/rx memif buffers */
 #define MAX_MEMIF_BUFS 256
 
 int epfd;
@@ -89,10 +90,12 @@ typedef struct
     int_fd_t *int_fd;
     /* tx buffers */
     memif_buffer_t *tx_bufs;
+    /* allocated tx buffers counter */
     /* number of tx buffers pointing to shared memory */
     uint16_t tx_buf_num;
     /* rx buffers */
     memif_buffer_t *rx_bufs;
+    /* allcoated rx buffers counter */
     /* number of rx buffers pointing to shared memory */
     uint16_t rx_buf_num;
 } memif_connection_t;
@@ -235,9 +238,12 @@ on_connect (memif_conn_handle_t conn, void *private_ctx)
     memif_connection_t *c = &memif_connection;
     INFO ("memif connected!");
     int err;
-    err = memif_get_queue_efd (c->conn, 0, &c->int_fd->fd);
+    uint16_t qid = 0;
+    /* get interrupt file descriptor for queue specified by qid */
+    err = memif_get_queue_efd (c->conn, qid, &c->int_fd->fd);
     INFO ("memif_get_queue_efd: %s", memif_strerror (err));
     c->int_fd->qid = 0;
+    /* add interrupt fd to epoll */
     return add_epoll_fd (c->int_fd->fd, EPOLLIN);
 }
 
@@ -250,10 +256,12 @@ on_disconnect (memif_conn_handle_t conn, void *private_ctx)
     return 0;
 }
 
-/* user needs to watch new fd or stop watching fd that is about to be closed */
+/* user needs to watch new fd or stop watching fd that is about to be closed.
+    control fd will be modified during connection establishment to minimize CPU usage */
 int
 control_fd_update (int fd, uint8_t events)
 {
+    /* convert memif event definitions to epoll events */
     if (events & MEMIF_FD_EVENT_DEL)
         return del_epoll_fd (fd);
 
@@ -286,6 +294,7 @@ icmpr_memif_create (int is_master)
     args.mode = 0;
     /* socket filename is not specified, because this app is supposed to
          connect to VPP over memif. so default socket filename will be used */
+    /* default socketfile = /run/vpp/memif.sock */
 
     args.interface_id = 0;
     /* last argument for memif_create (void * private_ctx) is used by user
@@ -334,6 +343,7 @@ icmpr_buffer_alloc (long n)
     memif_connection_t *c = &memif_connection;
     int err;
     uint16_t r, qid = 0;
+    /* set data pointer to shared memory and set buffer_len to shared mmeory buffer len */
     err = memif_buffer_alloc (c->conn, qid, c->tx_bufs, n, &r);
     INFO ("memif_buffer_alloc: %s", memif_strerror (err));
     c->tx_buf_num += r;
@@ -347,6 +357,8 @@ icmpr_tx_burst ()
     memif_connection_t *c = &memif_connection;
     int err;
     uint16_t r, qid = 0;
+    /* inform peer memif interface about data in shared memory buffers */
+    /* mark memif buffers as free */
     err = memif_tx_burst (c->conn, qid, c->tx_bufs, c->tx_buf_num, &r);
     INFO ("memif_tx_burst: %s", memif_strerror (err));
     DBG ("tx: %d/%u", r, c->tx_buf_num);
@@ -357,6 +369,7 @@ icmpr_tx_burst ()
 int
 icmpr_free ()
 {
+    /* application cleanup */
     memif_connection_t *c = &memif_connection;
     free (c->int_fd);
     c->int_fd = NULL;
@@ -419,13 +432,9 @@ int
 icmpr_interrupt (int fd)
 {
     memif_connection_t *c = &memif_connection;
-/*    DBG ("interrupted!");
-    uint64_t b;
-    ssize_t r = read (fd, &b, sizeof (b));
-*/
-
     int err;
     uint16_t rx;
+    /* receive data from shared memory buffers */
     err = memif_rx_burst (c->conn, 0, c->rx_bufs, MAX_MEMIF_BUFS, &rx);
     INFO ("memif_rx_burst: %s", memif_strerror (err));
     c->rx_buf_num += rx;
@@ -443,6 +452,7 @@ icmpr_interrupt (int fd)
     }
 
     uint16_t fb;
+    /* mark memif buffers and shared memory buffers as free */
     err = memif_buffer_free (c->conn, 0, c->rx_bufs, rx, &fb);
     INFO ("memif_buffer_free: %s", memif_strerror (err));
     c->rx_buf_num -= fb;
@@ -478,12 +488,17 @@ poll_event (int timeout)
     /* this app does not use any other file descriptors than stds and memif control fds */
         if ( evt.data.fd > 2)
         {
+            /* event on memif interrupt fd */
             if (evt.data.fd == c->int_fd->fd)
             {
+                /* WIP */
+                /* in future patch there will be one handler and callback on interrupt */
                 icmpr_interrupt (evt.data.fd);
             }
             else
             {
+                /* event of memif control fd */
+                /* convert epolle events to memif events */
                 if (evt.events & EPOLLIN)
                     events |= MEMIF_FD_EVENT_READ;
                 if (evt.events & EPOLLOUT)
@@ -537,6 +552,8 @@ int main ()
     int err;
     err = memif_init (control_fd_update);
     INFO ("memif_init: %s", memif_strerror (err));
+
+    print_help ();
 
     /* main loop */
     while (1)
