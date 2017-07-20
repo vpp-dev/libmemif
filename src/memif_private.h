@@ -1,6 +1,6 @@
 /*
  *------------------------------------------------------------------
- * Copyright (c) 2017 Cisco and/or its affiliates.
+ * Copyright (c) 2017 Pantheon technologies.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:
@@ -78,36 +78,6 @@
 
 #endif /* MEMIF_DBG */
 
-#if 0
-
-typedef enum
-{
-    MEMIF_ERR_SUCCESS = 0,          /* success */
-/* SYSCALL ERRORS */
-    MEMIF_ERR_SYSCALL,              /* other syscall error */
-    MEMIF_ERR_ACCES,                /* permission denied */
-    MEMIF_ERR_FILE_LIMIT,           /* system open file limit */
-    MEMIF_ERR_PROC_FILE_LIMIT,      /* process open file limit */
-    MEMIF_ERR_ALREADY,              /* connection already requested */
-    MEMIF_ERR_AGAIN,                /* fd is not socket, or operation would block */
-    MEMIF_ERR_BAD_FD,               /* invalid fd */
-    MEMIF_ERR_NOMEM,                /* out of memory */
-/* LIBMEMIF ERRORS */
-    MEMIF_ERR_INVAL_ARG,            /* invalid argument */
-    MEMIF_ERR_NOCONN,               /* handle points to no connection */
-    MEMIF_ERR_CONN,                 /* handle points to existing connection */
-    MEMIF_ERR_CB_FDUPDATE,          /* user defined callback memif_control_fd_update_t error */
-    MEMIF_ERR_FILE_NOT_SOCK,        /* file specified by socket filename 
-                                       exists, but it's not socket */
-    MEMIF_ERR_NO_SHMFD,             /* missing shm fd */
-    MEMIF_ERR_COOKIE,               /* wrong cookie on ring */
-    MEMIF_ERR_NOBUF_RING,           /* ring buffer full */
-    MEMIF_ERR_NOBUF,                /* not enough memif buffers */
-    MEMIF_ERR_INT_WRITE,            /* send interrupt error */
-} memif_err_t;
-
-#endif /* 0 */
-
 typedef struct
 {
     void *shm;
@@ -154,6 +124,7 @@ typedef struct memif_connection
     memif_fn *write_fn, *read_fn, *error_fn;
 
     memif_connection_update_t *on_connect, *on_disconnect;
+    memif_interrupt_t *on_interrupt;
     void *private_ctx;
 
     /* connection message queue */
@@ -199,6 +170,7 @@ typedef struct
 } libmemif_main_t;
 
 extern libmemif_main_t libmemif_main;
+extern int memif_epfd;
 
 /* main.c */
 

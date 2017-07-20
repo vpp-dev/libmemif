@@ -11,8 +11,8 @@ Shared memory packet interface (memif) provides high performance packet transmit
   - [x] ICMP responder example app
 - [x] Transmit/receive packets
 - [x] Interrupt mode support
-- [ ] File descriptor event polling in libmemif (optional)
-  - [ ] Simplify file descriptor event polling (one handler for control and interrupt channel)
+- [x] File descriptor event polling in libmemif (optional)
+  - [x] Simplify file descriptor event polling (one handler for control and interrupt channel)
 - [ ] Multiple connections
 - [ ] Multiple regions
 - [ ] Multipe queues
@@ -70,7 +70,9 @@ For detailed information on api calls and structures please refer to [libmemif.h
    - Declare callback function handling file descriptor event polling. memif\_control\_fd\_update\_t
    - Call memif initialization function. memif_init
    
-> If event occures on any file descriptor returned by this callback, call memif\_control\_fd\_handler function.
+> If event occures on any file descriptor returned by this callback, call memif\_control\_fd\_handler function. 
+> If callback function parameter for memif\_init function is set to NULL, libmemif will handle file descriptor event polling.
+  Api call memif\_poll\_event will call epoll\_pwait wit user defined timeout to poll event on file descriptors opend by libmemif.
     
 > Mmeif initialization function will initialize internal structures and create timer file descriptor, which will be used for sending periodic connection requests. Timer is disarmed if no memif interface is created.
  
@@ -88,9 +90,7 @@ For detailed information on api calls and structures please refer to [libmemif.h
     - Once connection has been established, a callback will inform the user about connection status change.
 
 4. Interrupt packet receive
-   - Interrupt mode is still Work In Progress and will be simplified in furure patch.
-   - For interrupt mode, user application is required to register interrupt file descriptor for event polling. Api call memif\_get\_queue\_efd will return this interrupt file descriptor.
-     - If event occures on this file descriptor, there are packets in shared memory to be received.
+    - If event is polled on interrupt file descriptor, libmemif will call memif\_interrupt\_t callback specified for every connection instance.
 
 6. Memif buffers
     - Packet data are stored in memif\_buffer\_t. Pointer _data_ points to shared memory buffer, and unsigned integer *data\_len* contains packet data length.
@@ -118,6 +118,10 @@ For detailed information on api calls and structures please refer to [libmemif.h
 
 - [ICMP Responder](examples/icmp_responder/main.c)
 
+#### Example app (libmemif fd event polling):
+- [ICMP Responder](examples/icmp_responder2/main.c)
+> Application will create memif interface in slave mode and try to connect to VPP. Exit using Ctrl+C. Application will handle SIGINT signal, free allocated memory and exit with EXIT_SUCCESS.
+
 VPP side config:
 ```
 # create memif id 0 master
@@ -125,3 +129,4 @@ VPP side config:
 # set int ip address memif0 192.168.1.1/24
 # ping 192.168.1.2
 ```
+> Example applications use VPP default socket file for memif: /run/vpp/memif.sock

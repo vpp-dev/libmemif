@@ -69,8 +69,6 @@
 /* maximum tx/rx memif buffers */
 #define MAX_MEMIF_BUFS 256
 
-int epfd;
-
 typedef struct
 {
     uint16_t index;
@@ -89,6 +87,7 @@ typedef struct
 } memif_connection_t;
 
 memif_connection_t memif_connection;
+int epfd;
 
 static void
 print_memif_details ()
@@ -156,68 +155,6 @@ print_memif_details ()
 
     free (buf);
 }
-
-int
-add_epoll_fd (int fd, uint32_t events)
-{
-    if (fd < 0)
-    {
-        DBG ("invalid fd %d", fd);
-        return -1;
-    }
-    struct epoll_event evt;
-    memset (&evt, 0, sizeof (evt));
-    evt.events = events;
-    evt.data.fd = fd;
-    if (epoll_ctl (epfd, EPOLL_CTL_ADD, fd, &evt) < 0)
-    {
-        DBG ("epoll_ctl: %s fd %d", strerror (errno), fd);
-        return -1;
-    }
-    DBG ("fd %d added to epoll", fd);
-    return 0;
-}
-
-int
-mod_epoll_fd (int fd, uint32_t events)
-{
-    if (fd < 0)
-    {
-        DBG ("invalid fd %d", fd);
-        return -1;
-    }
-    struct epoll_event evt;
-    memset (&evt, 0, sizeof (evt));
-    evt.events = events;
-    evt.data.fd = fd;
-    if (epoll_ctl (epfd, EPOLL_CTL_MOD, fd, &evt) < 0)
-    {
-        DBG ("epoll_ctl: %s fd %d", strerror (errno), fd);
-        return -1;
-    }
-    DBG ("fd %d moddified on epoll", fd);
-    return 0;
-}
-
-int
-del_epoll_fd (int fd)
-{
-    if (fd < 0)
-    {
-        DBG ("invalid fd %d", fd);
-        return -1;
-    }
-    struct epoll_event evt;
-    memset (&evt, 0, sizeof (evt));
-    if (epoll_ctl (epfd, EPOLL_CTL_DEL, fd, &evt) < 0)
-    {
-        DBG ("epoll_ctl: %s fd %d", strerror (errno), fd);
-        return -1;
-    }
-    DBG ("fd %d removed from epoll", fd);
-    return 0;
-}
-
 /* informs user about connected status. private_ctx is used by user to identify connection
     (multiple connections WIP) */
 int
@@ -236,25 +173,37 @@ on_disconnect (memif_conn_handle_t conn, void *private_ctx)
     return 0;
 }
 
-/* user needs to watch new fd or stop watching fd that is about to be closed.
-    control fd will be modified during connection establishment to minimize CPU usage */
 int
-control_fd_update (int fd, uint8_t events)
+icmpr_memif_delete ()
 {
-    /* convert memif event definitions to epoll events */
-    if (events & MEMIF_FD_EVENT_DEL)
-        return del_epoll_fd (fd);
+    int err;
+    /* disconenct then delete memif connection */
+    err = memif_delete (&(&memif_connection)->conn);
+    INFO ("memif_delete: %s", memif_strerror (err));
+    return 0;
+}
 
-    uint32_t evt = 0;
-    if (events & MEMIF_FD_EVENT_READ)
-        evt |= EPOLLIN;
-    if (events & MEMIF_FD_EVENT_WRITE)
-        evt |= EPOLLOUT;
-
-    if (events & MEMIF_FD_EVENT_MOD)
-        return mod_epoll_fd (fd, evt);
-
-    return add_epoll_fd (fd, evt);
+void
+print_help ()
+{
+    printf ("LIBMEMIF EXAMPLE APP: %s", APP_NAME);
+#ifdef ICMP_DBG
+    printf (" (debug)");
+#endif
+    printf ("\n");
+    printf ("==============================\n");
+    printf ("libmemif version: %s", LIBMEMIF_VERSION);
+#ifdef MEMIF_DBG
+    printf (" (debug)");
+#endif
+    printf ("\n");
+    printf ("memif version: %d\n", MEMIF_VERSION);
+    printf ("commands:\n");
+    printf ("\thelp - prints this help\n");
+    printf ("\texit - exit app\n");
+    printf ("\tconn - create memif (slave-mode)\n");
+    printf ("\tdel  - delete memif\n");
+    printf ("\tshow - show connection details\n");
 }
 
 int
@@ -286,11 +235,34 @@ icmpr_tx_burst (uint16_t qid)
     return 0;
 }
 
+int
+icmpr_free ()
+{
+    /* application cleanup */
+    memif_connection_t *c = &memif_connection;
+    free (c->tx_bufs);
+    c->tx_bufs = NULL;
+    free (c->rx_bufs);
+    c->rx_bufs = NULL;
+
+    return 0;
+}
+
+void
+icmpr_exit (int sig)
+{
+    printf ("\n");
+    icmpr_memif_delete ();
+    icmpr_free ();
+    exit (EXIT_SUCCESS);
+}
+
 /* called when event is polled on interrupt file descriptor.
     there are packets in shared memory ready to be received */
 int
 on_interrupt (memif_conn_handle_t conn, void *private_ctx, uint16_t qid)
 {
+    DBG ("interrupted");
     memif_connection_t *c = &memif_connection;
     int err;
     uint16_t rx;
@@ -353,160 +325,11 @@ icmpr_memif_create (int is_master)
     return 0;
 }
 
-int
-icmpr_memif_delete ()
-{
-    int err;
-    /* disconenct then delete memif connection */
-    err = memif_delete (&(&memif_connection)->conn);
-    INFO ("memif_delete: %s", memif_strerror (err));
-    return 0;
-}
-
-void
-print_help ()
-{
-    printf ("LIBMEMIF EXAMPLE APP: %s", APP_NAME);
-#ifdef ICMP_DBG
-    printf (" (debug)");
-#endif
-    printf ("\n");
-    printf ("==============================\n");
-    printf ("libmemif version: %s", LIBMEMIF_VERSION);
-#ifdef MEMIF_DBG
-    printf (" (debug)");
-#endif
-    printf ("\n");
-    printf ("memif version: %d\n", MEMIF_VERSION);
-    printf ("commands:\n");
-    printf ("\thelp - prints this help\n");
-    printf ("\texit - exit app\n");
-    printf ("\tconn - create memif (slave-mode)\n");
-    printf ("\tdel  - delete memif\n");
-    printf ("\tshow - show connection details\n");
-}
-int
-icmpr_free ()
-{
-    /* application cleanup */
-    memif_connection_t *c = &memif_connection;
-    free (c->tx_bufs);
-    c->tx_bufs = NULL;
-    free (c->rx_bufs);
-    c->rx_bufs = NULL;
-
-    return 0;
-}
-
-int
-user_input_handler ()
-{
-    char *in = (char *) malloc (256);
-    char *ui = fgets (in, 256, stdin);
-    if (in[0] == '\n')
-        goto done;
-    ui = strtok (in, " ");
-    if (strncmp (ui, "exit", 4) == 0)
-    {
-        free (in);
-        icmpr_memif_delete ();
-        icmpr_free ();
-        exit (EXIT_SUCCESS);
-    }
-    else if (strncmp (ui, "help", 4) == 0)
-    {
-        print_help ();
-        goto done;
-    }
-    else if (strncmp (ui, "conn", 4) == 0)
-    {
-        icmpr_memif_create (0);
-        goto done;
-    }
-    else if (strncmp (ui, "del", 3) == 0)
-    {
-        icmpr_memif_delete ();
-        goto done;
-    }
-    else if (strncmp (ui, "show", 4) == 0)
-    {
-        print_memif_details ();
-        goto done;
-    }
-    else
-    {
-        DBG ("unknown command: %s", ui);
-        goto done;
-    }
-
-    return 0;
-done:
-    free (in);
-    return 0;
-}
-
-int
-poll_event (int timeout)
-{
-    memif_connection_t *c = &memif_connection;
-    struct epoll_event evt, *e;
-    int app_err = 0, memif_err = 0, en = 0;
-    int tmp, nfd;
-    uint32_t events = 0;
-    memset (&evt, 0, sizeof (evt));
-    evt.events = EPOLLIN | EPOLLOUT;
-    sigset_t sigset;
-    sigemptyset (&sigset);
-    en = epoll_pwait (epfd, &evt, 1, timeout, &sigset);
-    if (en < 0)
-    {
-        DBG ("epoll_pwait: %s", strerror (errno));
-        return -1;
-    }
-    if (en > 0)
-    {
-    /* this app does not use any other file descriptors than stds and memif control fds */
-        if ( evt.data.fd > 2)
-        {
-            /* event of memif control fd */
-            /* convert epolle events to memif events */
-            if (evt.events & EPOLLIN)
-                events |= MEMIF_FD_EVENT_READ;
-            if (evt.events & EPOLLOUT)
-                events |= MEMIF_FD_EVENT_WRITE;
-            if (evt.events & EPOLLERR)
-                events |= MEMIF_FD_EVENT_ERROR;
-            memif_err = memif_control_fd_handler (evt.data.fd, events);
-            INFO ("memif_control_fd_handler: %s", memif_strerror (memif_err));
-        }
-        else if (evt.data.fd == 0)
-        {
-            app_err = user_input_handler ();
-        }
-        else
-        {
-            DBG ("unexpected event at memif_epfd. fd %d", evt.data.fd);
-        }
-    }
-
-    if ((app_err < 0) || (memif_err < 0))
-    {
-        if (app_err < 0)
-            DBG ("user input handler error");
-        if (memif_err < 0)
-            DBG ("memif control fd handler error");
-        return -1;
-    }
-
-    return 0;
-}
-
 int main ()
 {
-    epfd = epoll_create (1);
-    add_epoll_fd (0, EPOLLIN);
-
     memif_connection_t *c = &memif_connection;
+
+    signal (SIGINT, icmpr_exit);
 
     /* initialize global memif connection handle */
     c->conn = NULL;
@@ -521,15 +344,18 @@ int main ()
     /* if valid callback is passed as argument, fd event polling will be done by user
         all file descriptors and events will be passed to user in this callback */
     /* if callback is set to NULL libmemif will handle fd event polling */
-    err = memif_init (control_fd_update);
+    err = memif_init (NULL);
     INFO ("memif_init: %s", memif_strerror (err));
 
     print_help ();
 
+    icmpr_memif_create (0);
+    print_memif_details ();
+
     /* main loop */
     while (1)
     {
-        if (poll_event (-1) < 0)
+        if (memif_poll_event (-1) < 0)
         {
             DBG ("poll_event error!");
         }

@@ -1,4 +1,6 @@
 /*
+ *------------------------------------------------------------------
+ * Copyright (c) 2017 Pantheon technologies.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:
@@ -40,6 +42,8 @@
 #include <sys/stat.h>
 #include <sys/eventfd.h>
 #include <sys/timerfd.h>
+#include <sys/epoll.h>
+#include <signal.h>
 
 /* memif protocol msg, ring and descriptor definitions */
 #include <memif.h>
@@ -60,6 +64,7 @@
 #endif /* __x86_x64__ */
 
 libmemif_main_t libmemif_main;
+int memif_epfd;
 
 static char memif_buf[MAX_ERRBUF_LEN];
 
@@ -88,7 +93,7 @@ const char* memif_errlist[ERRLIST_LEN] = { /* MEMIF_ERR_SUCCESS */
                             /* MEMIF_ERR_CONN */
     "Memif connection handle points to existing connection",
                             /* MEMIF_ERR_CB_FDUPDATE */
-    "User defined callback memif_control_fd_update_t returned error",
+    "Callback memif_control_fd_update_t returned error",
                             /* MEMIF_ERR_FILE_NOT_SOCK */
     "File specified by socket filename exists and is not socket.",
                             /* MEMIF_ERR_NO_SHMFD */
@@ -203,11 +208,106 @@ memif_syscall_error_handler (int err_code)
     return MEMIF_ERR_SYSCALL;
 }
 
+static int
+memif_add_epoll_fd (int fd, uint32_t events)
+{
+    if (fd < 0)
+    {
+        DBG ("invalid fd %d", fd);
+        return -1;
+    }
+    struct epoll_event evt;
+    memset (&evt, 0, sizeof (evt));
+    evt.events = events;
+    evt.data.fd = fd;
+    if (epoll_ctl (memif_epfd, EPOLL_CTL_ADD, fd, &evt) < 0)
+    {
+        DBG ("epoll_ctl: %s fd %d", strerror (errno), fd);
+        return -1;
+    }
+    DBG ("fd %d added to epoll", fd);
+    return 0;
+}
+
+static int
+memif_mod_epoll_fd (int fd, uint32_t events)
+{
+    if (fd < 0)
+    {
+        DBG ("invalid fd %d", fd);
+        return -1;
+    }
+    struct epoll_event evt;
+    memset (&evt, 0, sizeof (evt));
+    evt.events = events;
+    evt.data.fd = fd;
+    if (epoll_ctl (memif_epfd, EPOLL_CTL_MOD, fd, &evt) < 0)
+    {
+        DBG ("epoll_ctl: %s fd %d", strerror (errno), fd);
+        return -1;
+    }
+    DBG ("fd %d moddified on epoll", fd);
+    return 0;
+}
+
+static int
+memif_del_epoll_fd (int fd)
+{
+    if (fd < 0)
+    {
+        DBG ("invalid fd %d", fd);
+        return -1;
+    }
+    struct epoll_event evt;
+    memset (&evt, 0, sizeof (evt));
+    if (epoll_ctl (memif_epfd, EPOLL_CTL_DEL, fd, &evt) < 0)
+    {
+        DBG ("epoll_ctl: %s fd %d", strerror (errno), fd);
+        return -1;
+    }
+    DBG ("fd %d removed from epoll", fd);
+    return 0;
+}
+
+int
+memif_control_fd_update (int fd, uint8_t events)
+{
+    if (events & MEMIF_FD_EVENT_DEL)
+        return memif_del_epoll_fd (fd);
+
+    uint32_t evt = 0;
+    if (events & MEMIF_FD_EVENT_READ)
+        evt |= EPOLLIN;
+    if (events & MEMIF_FD_EVENT_WRITE)
+        evt |= EPOLLOUT;
+
+    if (events & MEMIF_FD_EVENT_MOD)
+        return memif_mod_epoll_fd (fd, evt);
+
+    return memif_add_epoll_fd (fd, evt);
+}
+
+static void
+memif_control_fd_update_register (memif_control_fd_update_t *cb)
+{
+    libmemif_main_t *lm = &libmemif_main;
+    lm->control_fd_update = cb;
+}
+
 int memif_init (memif_control_fd_update_t *on_control_fd_update)
 {
     int err = MEMIF_ERR_SUCCESS; /* 0 */
     libmemif_main_t *lm = &libmemif_main;
-    lm->control_fd_update = on_control_fd_update;
+
+    /* register control fd update callback */
+    if (on_control_fd_update != NULL)
+        memif_control_fd_update_register (on_control_fd_update);
+    else
+    {
+        memif_epfd = epoll_create (1);
+        memif_control_fd_update_register (memif_control_fd_update);
+    }
+
     memset (&lm->ms, 0, sizeof (memif_socket_t));
     lm->conn = NULL;
 
@@ -225,10 +325,9 @@ int memif_init (memif_control_fd_update_t *on_control_fd_update)
     lm->arm.it_interval.tv_nsec = 0;
     memset (&lm->disarm, 0, sizeof (lm->disarm));
 
-    /* check return or not? */
     if (lm->control_fd_update (lm->timerfd, MEMIF_FD_EVENT_READ) < 0)
     {
-        DBG ("user defined callback type memif_control_fd_update_t error!");
+        DBG ("callback type memif_control_fd_update_t error!");
         return MEMIF_ERR_CB_FDUPDATE;
     }    
 
@@ -254,6 +353,7 @@ int
 memif_create (memif_conn_handle_t *c, memif_conn_args_t *args,
               memif_connection_update_t *on_connect,
               memif_connection_update_t *on_disconnect,
+              memif_interrupt_t *on_interrupt,
               void *private_ctx)
 {
     int err;
@@ -293,6 +393,7 @@ memif_create (memif_conn_handle_t *c, memif_conn_args_t *args,
     conn->fd = -1;
     conn->on_connect = on_connect;
     conn->on_disconnect = on_disconnect;
+    conn->on_interrupt = on_interrupt;
     conn->private_ctx = private_ctx;
 
     uint8_t l = strlen ((char *) args->interface_name);
@@ -473,8 +574,8 @@ memif_control_fd_handler (int fd, uint8_t events)
                     conn->write_fn = memif_conn_fd_write_ready;
                     conn->error_fn = memif_conn_fd_error;
 
-                    lm->control_fd_update (
-                            sockfd, MEMIF_FD_EVENT_READ | MEMIF_FD_EVENT_WRITE);
+                        lm->control_fd_update (
+                                sockfd, MEMIF_FD_EVENT_READ | MEMIF_FD_EVENT_WRITE);
 
                     /* TODO: with multiple connections support,
                         only disarm if there is no disconnected slave */
@@ -494,6 +595,14 @@ memif_control_fd_handler (int fd, uint8_t events)
     else
     {
         conn = lm->conn;
+        if (conn->rx_queues != NULL)
+        {
+            if (fd == conn->rx_queues->int_fd)
+            {
+                conn->on_interrupt ((void *) conn, conn->private_ctx, 0);
+                return MEMIF_ERR_SUCCESS; /* 0 */
+            }
+        }
         if (conn->fd == fd)
         {
             if (events & MEMIF_FD_EVENT_READ)
@@ -524,6 +633,49 @@ error:
         close (sockfd);
     sockfd = -1;
     return err;
+}
+
+int
+memif_poll_event (int timeout)
+{
+    libmemif_main_t *lm = &libmemif_main;
+    struct epoll_event evt, *e;
+    int en = 0, err = MEMIF_ERR_SUCCESS; /* 0 */
+    uint32_t events = 0;
+    memset (&evt, 0, sizeof (evt));
+    evt.events = EPOLLIN | EPOLLOUT;
+    sigset_t sigset;
+    sigemptyset (&sigset);
+    en = epoll_pwait (memif_epfd, &evt, 1, timeout, &sigset);
+    if (en < 0)
+    {
+        DBG ("epoll_pwait: %s", strerror (errno));
+        return -1;
+    }
+    if (en > 0)
+    {
+        /* event on memif interrupt fd */
+        if (lm->conn->rx_queues != NULL)
+        {
+            if (evt.data.fd == lm->conn->rx_queues->int_fd)
+            {
+                lm->conn->on_interrupt ((void *) lm->conn, 
+                        lm->conn->private_ctx, 0);
+                return 0;
+            }
+        }
+        /* event of memif control fd */
+        /* convert epolle events to memif events */
+        if (evt.events & EPOLLIN)
+            events |= MEMIF_FD_EVENT_READ;
+        if (evt.events & EPOLLOUT)
+            events |= MEMIF_FD_EVENT_WRITE;
+        if (evt.events & EPOLLERR)
+            events |= MEMIF_FD_EVENT_ERROR;
+        err = memif_control_fd_handler (evt.data.fd, events);
+        DBG ("memif_control_fd_handler: %s", memif_strerror (err));
+    }
+    return 0;
 }
 
 static void

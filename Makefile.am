@@ -1,4 +1,4 @@
-# Copyright (c) 2017 Cisco and/or its affiliates.
+# Copyright (c) 2017 Pantheon technologies.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at:
@@ -46,7 +46,15 @@ icmp_responder_SOURCES = examples/icmp_responder/main.c examples/icmp_responder/
 icmp_responder_LDADD = libmemif.la
 icmp_responder_CPPFLAGS = $(AM_CPPFLAGS) -Isrc -Iexamples/icmp_responder
 
-noinst_PROGRAMS = icmp_responder
+#
+# ICMP responder libmemif event polling example
+#
+icmpr_lep_SOURCES = examples/icmp_responder2/main.c \
+                    examples/icmp_responder/icmp_proto.c
+icmpr_lep_LDADD = libmemif.la
+icmpr_lep_CPPFLAGS = $(AM_CPPFLAGS) -Isrc -Iexamples/icmp_responder
+
+noinst_PROGRAMS = icmp_responder icmpr_lep
 
 check_PROGRAMS = unit_test
 

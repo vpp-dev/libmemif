@@ -1,6 +1,6 @@
 /*
  *------------------------------------------------------------------
- * Copyright (c) 2017 Cisco and/or its affiliates.
+ * Copyright (c) 2017 Pantheon technologies.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:
@@ -102,6 +102,13 @@ typedef int (memif_control_fd_update_t) (int fd, uint8_t events);
     on connected -> start watching for events on interrupt fd
 */
 typedef int (memif_connection_update_t) (memif_conn_handle_t conn, void *private_ctx);
+
+/** \brief Memif interrupt occured (callback function)
+    @param conn - memif connection handle
+    @param private_ctx - private context
+    @param qid - queue id on which interrupt occured
+*/ 
+typedef int (memif_interrupt_t) (memif_conn_handle_t conn, void *private_ctx, uint16_t qid);
 
 /** \brief Memif connection arguments
     @param socket_filename - socket filename
@@ -211,6 +218,12 @@ int memif_get_details (memif_conn_handle_t conn, memif_details_t *md,
 /** \brief Memif initialization
     @param on_control_fd_update - if control fd updates inform user to watch new fd
 
+    if param on_control_fd_update is set to NULL,
+    libmemif will handle file descriptor event polling
+    if a valid callback is set, file descriptor event polling needs to be done by
+    user application, all file descriptors and event types will be passed in
+    this callback to user application
+
     return
         MEMIF_ERR_SUCCESS           - no error
         MEMIF_ERR_SYSCALL           - unspecified syscall error (compile with -DMEMIF_DBG)
@@ -257,7 +270,11 @@ int memif_init (memif_control_fd_update_t *on_control_fd_update);
         if this fd is passed to memif_control_fd_handler accept will be called and
         new fd will be passed to user with memif_control_fd_update_t
 */
-int memif_create (memif_conn_handle_t * conn, memif_conn_args_t * args, memif_connection_update_t * on_connect, memif_connection_update_t * on_disconnect, void * private_ctx);
+int memif_create (memif_conn_handle_t * conn, memif_conn_args_t * args,
+                  memif_connection_update_t * on_connect,
+                  memif_connection_update_t * on_disconnect,
+                  memif_interrupt_t * on_interrupt,
+                  void * private_ctx);
 
 /** \brief Memif control file descriptor handler
     @param fd - file descriptor on which the event occured
@@ -287,17 +304,6 @@ int memif_create (memif_conn_handle_t * conn, memif_conn_args_t * args, memif_co
             handle socket messaging (internal connection establishment)
 */
 int memif_control_fd_handler (int fd, uint8_t events);
-
-/** \brief Memif get queue event file descriptor
-    @param conn - memif connection handle
-    @param qid - number identifying queue
-    @param efd - return interrupt fd for memif queue specified by qid
-
-    rerurn
-        MEMIF_ERR_SUCCESS - no error
-        MEMIF_ERR_NOCONN - handle points to NULL
-*/
-int memif_get_queue_efd (memif_conn_handle_t conn, uint16_t qid, int *efd);
 
 /** \brief Memif delete
     @param conn - pointer to memif connection handle
@@ -374,5 +380,17 @@ int memif_tx_burst (memif_conn_handle_t conn, uint16_t qid,
 */
 int memif_rx_burst (memif_conn_handle_t conn, uint16_t qid,
                     memif_buffer_t *bufs, uint16_t count, uint16_t *rx);
+
+/** \brief Memif poll event
+    @param timeout - timeout in seconds
+
+    passive event polling
+    timeout = 0 - dont wait for event, check event queue if there is an event and return.
+    timeout = -1 - wait until event
+
+    return
+        MEMIF_ERR_SUCCESS           - no error
+*/
+int memif_poll_event (int timeout);
 
 #endif /* _LIBMEMIF_H_ */

@@ -1,6 +1,6 @@
 /*
  *------------------------------------------------------------------
- * Copyright (c) 2017 Cisco and/or its affiliates.
+ * Copyright (c) 2017 Pantheon technologies.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:
@@ -529,6 +529,7 @@ static_fn int
 memif_msg_receive_connect (memif_connection_t *c, memif_msg_t *msg)
 {
     memif_msg_connect_t *cm = &msg->connect;
+    libmemif_main_t *lm = &libmemif_main;
 
     int err;
     err = memif_connect1 (c);
@@ -537,6 +538,7 @@ memif_msg_receive_connect (memif_connection_t *c, memif_msg_t *msg)
 
     strncpy ((char *) c->remote_if_name, (char *) cm->if_name, strlen ((char *) cm->if_name));
 
+    lm->control_fd_update (c->rx_queues->int_fd, MEMIF_FD_EVENT_READ);
     c->on_connect ((void *) c, c->private_ctx);
 
     return err;
@@ -547,6 +549,7 @@ static_fn int
 memif_msg_receive_connected (memif_connection_t *c, memif_msg_t *msg)
 {
     memif_msg_connect_t *cm = &msg->connect;
+    libmemif_main_t *lm = &libmemif_main;
 
     int err;
     err = memif_connect1 (c);
@@ -555,6 +558,7 @@ memif_msg_receive_connected (memif_connection_t *c, memif_msg_t *msg)
 
     strncpy ((char *) c->remote_if_name, (char *) cm->if_name, strlen ((char *) cm->if_name));
 
+    lm->control_fd_update (c->rx_queues->int_fd, MEMIF_FD_EVENT_READ);
     c->on_connect ((void *) c, c->private_ctx);
 
     return err;
