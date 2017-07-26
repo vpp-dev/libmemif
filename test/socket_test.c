@@ -15,25 +15,10 @@
  *------------------------------------------------------------------
  */
 
-#define _GNU_SOURCE
-#include <sys/types.h>
-#include <sys/un.h>
-#include <string.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <net/if.h>
-#include <sys/ioctl.h>
-#include <sys/uio.h>
-#include <sys/mman.h>
-#include <sys/prctl.h>
-#include <fcntl.h>
-#include <errno.h>
-#include <sys/stat.h>
-#include <unistd.h>
-
 #include <socket_test.h>
 
-#define TEST_SOCK_DIR "/libmemif/memif.sock"
+#include <memif_private.h>
+#include <socket.h>
 
 static int
 get_queue_len (memif_msg_queue_elt_t *q)
@@ -48,10 +33,19 @@ get_queue_len (memif_msg_queue_elt_t *q)
     return r;
 }
 
-static int
-test_msg_queue_add_pop ()
+static void
+queue_free (memif_msg_queue_elt_t **e)
 {
-    int rv = 0;
+    if (*e == NULL)
+        return;
+    queue_free (&(*e)->next);
+    free (*e);
+    *e = NULL;
+    return;
+}
+
+START_TEST (test_msg_queue)
+{
     memif_connection_t conn;
     conn.msg_queue = NULL;
     conn.fd = -1;
@@ -66,11 +60,7 @@ test_msg_queue_add_pop ()
             memif_msg_enq_init (&conn);
     }
 
-    if (len != get_queue_len (conn.msg_queue))
-    {
-        ERROR("incorrect queue len");
-        rv = -1;
-    }
+    ck_assert_int_eq (len, get_queue_len (conn.msg_queue));
 
     int pop = 6;
 
@@ -78,63 +68,42 @@ test_msg_queue_add_pop ()
     {
         if (i % 2)
         {
-            if (conn.msg_queue->msg.type != MEMIF_MSG_TYPE_ACK)
-            {
-                ERROR ("incorrect msg type");
-                rv = -1;
-            }
+            ck_assert_uint_eq (conn.msg_queue->msg.type, MEMIF_MSG_TYPE_ACK);
         }
         else
         {
-            if (conn.msg_queue->msg.type != MEMIF_MSG_TYPE_INIT)
-            {
-                ERROR ("incorrect msg type");
-                rv = -1;
-            }
+            ck_assert_uint_eq (conn.msg_queue->msg.type, MEMIF_MSG_TYPE_INIT);
         }
         conn.flags |= MEMIF_CONNECTION_FLAG_WRITE;
         /* function will return -1 because no socket is created */
         memif_conn_fd_write_ready (&conn);
     }
 
-    if ((len - pop) != get_queue_len (conn.msg_queue))
-    {
-        ERROR("incorrect queue_len");
-        rv = -1;
-    }
+    ck_assert_int_eq ((len - pop), get_queue_len (conn.msg_queue));
 
-    return rv;
-
+    queue_free (&conn.msg_queue);
 }
+END_TEST
 
-static int
-test_msg_enq_ack ()
+START_TEST (test_enq_ack)
 {
-    int rv = 0;
+    int err;
     memif_connection_t conn;
     conn.msg_queue = NULL;
 
-    memif_msg_enq_ack (&conn);
+    if ((err = memif_msg_enq_ack (&conn)) != MEMIF_ERR_SUCCESS)
+        ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
     memif_msg_queue_elt_t *e = conn.msg_queue;
 
-    if (e->msg.type != MEMIF_MSG_TYPE_ACK)
-    {
-        ERROR ("incorrect msg type");
-        rv = -1;
-    }
-    if (e->fd != -1)
-    {
-        ERROR ("incorrect file descriptor");
-        rv = -1;
-    }
-    return rv; 
+    ck_assert_uint_eq (e->msg.type, MEMIF_MSG_TYPE_ACK);
+    ck_assert_int_eq (e->fd, -1);
+    queue_free (&conn.msg_queue);
 }
+END_TEST
 
-
-static int
-test_msg_enq_init ()
+START_TEST (test_enq_init)
 {
-    int rv = 0;
+    int err;
     memif_connection_t conn;
     conn.msg_queue = NULL;
 
@@ -144,170 +113,177 @@ test_msg_enq_init ()
     strncpy ((char *)conn.args.instance_name, TEST_APP_NAME, strlen (TEST_APP_NAME));
     strncpy ((char *) conn.args.secret, TEST_SECRET, strlen (TEST_SECRET));
     
-    memif_msg_enq_init (&conn);
+    if ((err = memif_msg_enq_init (&conn)) != MEMIF_ERR_SUCCESS)
+        ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
+
     memif_msg_queue_elt_t *e = conn.msg_queue;
+
+    ck_assert_uint_eq (e->msg.type, MEMIF_MSG_TYPE_INIT);
+    ck_assert_int_eq (e->fd, -1);
     
-    if (e->msg.type != MEMIF_MSG_TYPE_INIT)
-    {
-        ERROR ("incorrect msg type");
-        rv = -1;
-    }
-    if (e->fd != -1)
-    {
-        ERROR ("incorrect file descriptor");
-        rv = -1;
-    }
     memif_msg_init_t *i = &e->msg.init;
-    if (i->version != MEMIF_VERSION)
-    {
-        ERROR ("incorrect memif version");
-        rv = -1;
-    }
-    if (i->id != conn.args.interface_id)
-    {
-        ERROR ("incorrect interface id");
-        rv = -1;
-    }
-    if (i->mode != conn.args.mode)
-    {
-        ERROR ("incorrect mode");
-        rv = -1;
-    }
-    if (strncmp ((char *) i->name, (char *) conn.args.instance_name,
-                strlen ((char *) i->name)) != 0)
-    {
-        ERROR ("incorrect interface name");
-        rv = -1;
-    }
-    if (strncmp ((char *) i->secret, (char *) conn.args.secret,
-                strlen ((char *) i->secret)) != 0)
-    {
-        ERROR ("incorrect secret");
-        rv = -1;
-    }
 
-    return rv;
+    ck_assert_uint_eq (i->version, MEMIF_VERSION);
+    ck_assert_uint_eq (i->id, conn.args.interface_id);
+    ck_assert_uint_eq (i->mode, conn.args.mode);
+    ck_assert_str_eq (i->name, conn.args.instance_name);
+    ck_assert_str_eq (i->secret, conn.args.secret);
+    queue_free (&conn.msg_queue);
 }
+END_TEST
 
-static int
-test_msg_enq_add_region ()
+START_TEST (test_enq_add_region)
 {
-    int rv = 0, frv = 0;
+    int err;
     memif_connection_t conn;
     conn.msg_queue = NULL;
     conn.regions = (memif_region_t *) malloc (sizeof(memif_region_t));
     memif_region_t *mr = conn.regions;
     mr->fd = 5;
     mr->region_size = 2048;
-    mr->next = NULL;
     uint8_t region_index = 0;
 
-    frv = memif_msg_enq_add_region (&conn, region_index);
-    if (frv < 0)
-    {
-        ERROR ("function error");
-        rv = -1;
-    }
+    if ((err = memif_msg_enq_add_region (&conn, region_index)) != MEMIF_ERR_SUCCESS)
+        ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
+        
     memif_msg_queue_elt_t *e = conn.msg_queue;
-    if (e->msg.type != MEMIF_MSG_TYPE_ADD_REGION)
-    {
-        ERROR ("incorrect msg type");
-        rv = -1;
-    }
-    if (e->fd != mr->fd)
-    {
-        ERROR ("file descriptor mismatch");
-        rv = -1;
-    }
-    memif_msg_add_region_t *ar = &e->msg.add_region;
-    if (ar->index != region_index)
-    {
-        ERROR ("region index mismatch");
-        rv = -1;
-    }
-    if (ar->size != mr->region_size)
-    {
-        ERROR ("region size mismatch");
-        rv = -1;
-    }
 
-    region_index = 9;
-    frv = memif_msg_enq_add_region (&conn, region_index);
-    if (frv == 0)
-    {
-        ERROR ("invalid region_index (success fn)");
-        rv = -1;
-    }
-    region_index = 0;
+    ck_assert_uint_eq (e->msg.type, MEMIF_MSG_TYPE_ADD_REGION);
+    ck_assert_int_eq (e->fd, mr->fd);
+    
+    memif_msg_add_region_t *ar = &e->msg.add_region;
+
+    ck_assert_uint_eq (ar->index, region_index);
+    ck_assert_uint_eq (ar->size, mr->region_size);
 
     free (conn.regions);
     conn.regions = NULL;
     mr = NULL;
-    frv = memif_msg_enq_add_region (&conn, region_index);
-    if (frv == 0)
-    {
-        ERROR ("invalid region (success fn)");
-        rv = -1;
-    }
-
-    return rv;
+    queue_free (&conn.msg_queue);
 }
+END_TEST
 
-static int
-test_msg_receive_add_region ()
+START_TEST (test_enq_add_ring)
 {
-    int rv = 0, frv = 0;
-    memif_connection_t conn;
-    conn.regions = NULL;
-    memif_msg_t msg;
-    msg.type = MEMIF_MSG_TYPE_ADD_REGION;
-    msg.add_region.size = 2048;
-    msg.add_region.index = 0;
-
-    int fd = 5;
-
-    frv = memif_msg_receive_add_region (&conn, &msg, fd);
-    if (frv < 0)
-    {
-        ERROR ("fuinction error");
-        rv = -1;
-    }
-
-    msg.add_region.index = 9;
-    frv = memif_msg_receive_add_region (&conn, &msg, fd);
-    if (frv == 0)
-    {
-        ERROR ("invalid region index (success fn)");
-        rv = -1;
-    }
-   
-    memif_region_t *mr = conn.regions;
-    if (mr->fd != fd)
-    {
-        ERROR ("incorrect file descriptor");
-        rv = -1;
-    }
-    if (mr->region_size != 2048)
-    {
-        ERROR ("incorrect region size");
-        rv = -1;
-    }
-    if (mr->shm != NULL)
-    {
-        ERROR ("invalid shm");
-        rv = -1;
-    }
- 
-    return rv;
-}
-
-static int
-test_msg_receive_hello ()
-{
-    int rv = 0;
+    int err;
     memif_connection_t conn;
     conn.msg_queue = NULL;
+    conn.rx_queues = (memif_queue_t *) malloc (sizeof (memif_queue_t));
+    conn.tx_queues = (memif_queue_t *) malloc (sizeof (memif_queue_t));
 
+    memif_queue_t *mq = conn.tx_queues;    
+    uint8_t dir = MEMIF_RING_S2M;
+    mq->int_fd = 5;
+    mq->offset = 0;
+    mq->log2_ring_size = 10;
+
+    if ((err = memif_msg_enq_add_ring (&conn, 0, dir)) != MEMIF_ERR_SUCCESS)
+        ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
+        
+    memif_msg_queue_elt_t *e = conn.msg_queue;
+
+    ck_assert_uint_eq (e->msg.type, MEMIF_MSG_TYPE_ADD_RING);
+    ck_assert_int_eq (e->fd, mq->int_fd);
+
+    memif_msg_add_ring_t *ar = &e->msg.add_ring;
+
+    ck_assert_uint_eq (ar->index, 0);
+    ck_assert_uint_eq (ar->offset, mq->offset);
+    ck_assert_uint_eq (ar->log2_ring_size, mq->log2_ring_size);
+    ck_assert (ar->flags & MEMIF_MSG_ADD_RING_FLAG_S2M);
+
+    dir = MEMIF_RING_M2S;
+    if ((err = memif_msg_enq_add_ring (&conn, 0, dir)) != MEMIF_ERR_SUCCESS)
+        ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
+    queue_free (&conn.msg_queue);
+}
+END_TEST
+
+START_TEST (test_enq_connect)
+{
+    int err;
+    memif_connection_t conn;
+    conn.msg_queue = NULL;
+    memset (conn.args.interface_name, 0, sizeof (conn.args.interface_name));
+    strncpy ((char *) conn.args.interface_name, TEST_IF_NAME, strlen (TEST_IF_NAME));
+
+    if ((err = memif_msg_enq_connect (&conn)) != MEMIF_ERR_SUCCESS)
+        ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
+
+    memif_msg_queue_elt_t *e = conn.msg_queue;
+
+    ck_assert_uint_eq (e->msg.type, MEMIF_MSG_TYPE_CONNECT);
+    ck_assert_int_eq (e->fd, -1);
+    ck_assert_str_eq (e->msg.connect.if_name, TEST_IF_NAME);
+    queue_free (&conn.msg_queue);
+}
+END_TEST
+
+START_TEST (test_enq_connected)
+{
+    int err;
+    memif_connection_t conn;
+    conn.msg_queue = NULL;
+    memset (conn.args.interface_name, 0, sizeof (conn.args.interface_name));
+    strncpy ((char *) conn.args.interface_name, TEST_IF_NAME, strlen (TEST_IF_NAME));
+
+    if ((err = memif_msg_enq_connected (&conn)) != MEMIF_ERR_SUCCESS)
+        ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
+
+    memif_msg_queue_elt_t *e = conn.msg_queue;
+
+    ck_assert_uint_eq (e->msg.type, MEMIF_MSG_TYPE_CONNECTED);
+    ck_assert_int_eq (e->fd, -1);
+    ck_assert_str_eq (e->msg.connect.if_name, TEST_IF_NAME);
+    queue_free (&conn.msg_queue);
+}
+END_TEST
+
+START_TEST (test_send)
+{
+    int err;
+    int fd = -1, afd = 5;
+    memif_msg_t msg;
+    memset (&msg, 0, sizeof (msg));
+
+    if ((err = memif_msg_send (fd, &msg, afd)) != MEMIF_ERR_SUCCESS)
+        ck_assert_msg (err == MEMIF_ERR_BAD_FD, 
+                "err code: %u, err msg: %s", err, memif_strerror (err));
+}
+END_TEST
+
+START_TEST (test_send_hello)
+{
+    int err;
+    memif_connection_t conn;
+    conn.fd = -1;
+    memset (conn.args.instance_name, 0, sizeof (conn.args.instance_name));
+    strncpy ((char *) conn.args.instance_name, TEST_APP_NAME, strlen (TEST_APP_NAME));
+
+    if ((err = memif_msg_send_hello (&conn)) != MEMIF_ERR_SUCCESS)
+        ck_assert_msg (err == MEMIF_ERR_BAD_FD, 
+                "err code: %u, err msg: %s", err, memif_strerror (err));
+}
+END_TEST
+
+START_TEST (test_send_disconnect)
+{
+    int err;
+    memif_connection_t conn;
+    conn.fd = -1;
+
+    /* only possible fail if memif_msg_send fails...  */
+    /* obsolete without socket */
+    if ((err = memif_msg_send_disconnect (&conn, "unit_test_dc", 0)) != MEMIF_ERR_SUCCESS)
+        ck_assert_msg (err == MEMIF_ERR_BAD_FD, 
+                "err code: %u, err msg: %s", err, memif_strerror (err));
+}
+END_TEST
+
+START_TEST (test_recv_hello)
+{
+    int err;
+    memif_connection_t conn;
     memif_msg_t msg;
 
     memif_msg_hello_t *h = &msg.hello;
@@ -325,50 +301,25 @@ test_msg_receive_hello ()
     conn.args.num_m2s_rings = 6;
     conn.args.log2_ring_size = 10;
 
-    rv = memif_msg_receive_hello (&conn, &msg);
-    if (rv < 0)
-    {
-        ERROR ("memif protocol mismatch");
-        return rv;
-    }
+    if ((err = memif_msg_receive_hello (&conn, &msg)) != MEMIF_ERR_SUCCESS)
+        ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
 
-    if (conn.args.num_s2m_rings != 2)
-    {
-        ERROR ("incorrect number of slave to master rings");
-        rv = -1;
-    }
-    if (conn.args.num_m2s_rings != 2)
-    {
-        ERROR ("incorrect number of master to slave rings");
-        rv = -1;
-    }
-    if (conn.args.log2_ring_size != 10)
-    {
-        ERROR ("incorrect ring size");
-        rv = -1;
-    }
-    if (strncmp ((char *) conn.remote_name, TEST_IF_NAME, strlen (TEST_IF_NAME)) !=  0)
-    {
-        ERROR ("incorrect remote name");
-        rv = -1;
-    }
+    ck_assert_uint_eq (conn.args.num_s2m_rings, 2);
+    ck_assert_uint_eq (conn.args.num_m2s_rings, 2);
+    ck_assert_uint_eq (conn.args.log2_ring_size, 10);
+    ck_assert_str_eq (conn.remote_name, TEST_IF_NAME);
 
     h->max_version = 9;
-    if (memif_msg_receive_hello (&conn, &msg) == 0)
-    {
-        ERROR ("no error on protocol mismatch");
-        rv = -1;
-    }
-
-    return rv; 
+    if ((err = memif_msg_receive_hello (&conn, &msg)) != MEMIF_ERR_SUCCESS)
+        ck_assert_msg (err == MEMIF_ERR_PROTO,
+                "err code: %u, err msg: %s", err, memif_strerror (err));
 }
+END_TEST
 
-static int
-test_msg_receive_init ()
+START_TEST (test_recv_init)
 {
-    int rv = 0, frv = 0;
+    int err;
     memif_connection_t conn;
-    conn.msg_queue = NULL;
 
     conn.args.interface_id = 69;
     conn.args.is_master = 1;
@@ -376,7 +327,6 @@ test_msg_receive_init ()
     conn.args.mode = 0;
     memset (conn.args.secret, '\0', 24);
     strncpy ((char *) conn.args.secret, TEST_SECRET, strlen (TEST_SECRET));
-
 
     memif_msg_t msg;
 
@@ -392,434 +342,240 @@ test_msg_receive_init ()
     strncpy ((char *) i->name, TEST_IF_NAME, strlen (TEST_IF_NAME));
     strncpy ((char *) i->secret, TEST_SECRET, strlen (TEST_SECRET));
 
-    frv = memif_msg_receive_init (&conn, &msg);
-    if (frv < 0)
-    {
-        ERROR ("function error");
-        rv = -1;
-    }
+    if ((err = memif_msg_receive_init (&conn, &msg)) != MEMIF_ERR_SUCCESS)
+        ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
+
     i->version = 9;
-    frv = memif_msg_receive_init (&conn, &msg);
-    if (frv == 0)
-    {
-        ERROR ("version mismatch (fn succes)");
-        rv = -1;
-    }
+    if ((err = memif_msg_receive_init (&conn, &msg)) != MEMIF_ERR_SUCCESS)
+        ck_assert_msg (err == MEMIF_ERR_PROTO,
+                "err code: %u, err msg: %s", err, memif_strerror (err));
     i->version = MEMIF_VERSION;
+
     i->id = 78;
-    frv = memif_msg_receive_init (&conn, &msg);
-    if (frv == 0)
-    {
-        ERROR ("id mismatch (fn success)");
-        rv = -1;
-    }
+    if ((err = memif_msg_receive_init (&conn, &msg)) != MEMIF_ERR_SUCCESS)
+        ck_assert_msg (err == MEMIF_ERR_ID,
+                "err code: %u, err msg: %s", err, memif_strerror (err));
     i->id = 69;
+
     i->mode = 1;
-    frv = memif_msg_receive_init (&conn, &msg);
-    if (frv == 0)
-    {
-        ERROR ("mode mismatch (fn success)");
-        rv = -1;
-    }
+    if ((err = memif_msg_receive_init (&conn, &msg)) != MEMIF_ERR_SUCCESS)
+        ck_assert_msg (err == MEMIF_ERR_MODE,
+                "err code: %u, err msg: %s", err, memif_strerror (err));
     i->mode = 0;
+
     i->secret[0] = '\0';
-    frv = memif_msg_receive_init (&conn, &msg);
-    if (frv == 0)
-    {
-        ERROR ("secret mismatch (fn success)");
-        rv = -1;
-    }
+    if ((err = memif_msg_receive_init (&conn, &msg)) != MEMIF_ERR_SUCCESS)
+        ck_assert_msg (err == MEMIF_ERR_SECRET,
+                "err code: %u, err msg: %s", err, memif_strerror (err));
     strncpy ((char *) i->secret, TEST_SECRET, strlen (TEST_SECRET));
+
     conn.args.is_master = 0;
-    frv = memif_msg_receive_init (&conn, &msg);
-    if (frv == 0)
-    {
-        ERROR ("slave cannot accept connection (fn success)");
-        rv = -1;
-    }
+    if ((err = memif_msg_receive_init (&conn, &msg)) != MEMIF_ERR_SUCCESS)
+        ck_assert_msg (err == MEMIF_ERR_ACCSLAVE,
+                "err code: %u, err msg: %s", err, memif_strerror (err));
     conn.args.is_master = 1;
+
     conn.fd = 5;
-    frv = memif_msg_receive_init (&conn, &msg);
-    if (frv == 0)
-    {
-        ERROR ("already connected (fn success)");
-        rv = -1;
-    }
-    return rv;
+    if ((err = memif_msg_receive_init (&conn, &msg)) != MEMIF_ERR_SUCCESS)
+        ck_assert_msg ((err == MEMIF_ERR_ALRCONN) || (err == MEMIF_ERR_BAD_FD),
+                "err code: %u, err msg: %s", err, memif_strerror (err));
 }
+END_TEST
 
-static int
-test_msg_enq_add_ring ()
+START_TEST (test_recv_add_region)
 {
-    int rv = 0, frv = 0;
-    memif_connection_t conn;
-    conn.msg_queue = NULL;
-    conn.rx_queues = NULL;
-    conn.tx_queues = (memif_queue_t *) malloc (sizeof (memif_queue_t));
-
-    memif_queue_t *mq = conn.tx_queues;    
-    uint8_t dir = MEMIF_RING_S2M;
-    mq->int_fd = 5;
-    mq->offset = 0;
-    mq->log2_ring_size = 10;
-
-    frv = memif_msg_enq_add_ring (&conn, 0, dir);
-    if (frv < 0)
-    {
-        ERROR ("function error");
-        rv = -1;
-    }
-    memif_msg_queue_elt_t *e = conn.msg_queue;
-    if (e->msg.type != MEMIF_MSG_TYPE_ADD_RING)
-    {
-        ERROR ("incorrect msg type");
-        rv = -1;
-    }
-    if (e->fd != mq->int_fd)
-    {
-        ERROR ("incorrect int fd");
-        rv = -1;
-    }
-    memif_msg_add_ring_t *ar = &e->msg.add_ring;
-    if (ar->index != 0)
-    {
-        ERROR ("incorrect queue index");
-        rv = -1;
-    }
-    if (ar->offset != mq->offset)
-    {
-        ERROR ("ring offset mismatch");
-        rv = -1;
-    }
-    if (ar->log2_ring_size != mq->log2_ring_size)
-    {
-        ERROR ("ring size mismatch");
-        rv = -1;
-    }
-    if ((ar->flags & MEMIF_MSG_ADD_RING_FLAG_S2M) == 0)
-    {
-        ERROR ("incorrect ring flag");
-        rv = -1;
-    }
-    
-    dir = MEMIF_RING_M2S;
-    frv = memif_msg_enq_add_ring (&conn, 0, dir);
-    if (frv == 0)
-    {
-        ERROR ("uninitialized queue (success fn)");
-        rv = -1;
-    }
-    dir = MEMIF_RING_S2M;
-    frv = memif_msg_enq_add_ring (&conn, 9, dir);
-    if (frv == 0)
-    {
-        ERROR ("invalid queue index (success fn)");
-        rv = -1;
-    }
-
-    return rv;
-}
-
-static int
-test_msg_enq_connect ()
-{
-    int rv = 0;
-    memif_connection_t conn;
-    conn.msg_queue = NULL;
-    strncpy ((char *) conn.args.interface_name, TEST_IF_NAME, strlen (TEST_IF_NAME));
-
-    memif_msg_enq_connect (&conn);
-    memif_msg_queue_elt_t *e = conn.msg_queue;
-    if (e->msg.type != MEMIF_MSG_TYPE_CONNECT)
-    {
-        ERROR ("incorrect msg type");
-        rv = -1;
-    }
-    if (e->fd != -1)
-    {
-        ERROR ("invalid file descriptor");
-        rv = -1;
-    }
-    if (strncmp ((char *) e->msg.connect.if_name, TEST_IF_NAME, strlen (TEST_IF_NAME)) != 0)
-    {
-        ERROR ("incorrect interface name");
-        rv = -1;
-    }
-    return rv;
-}
-
-static int
-test_msg_enq_connected ()
-{
-    int rv = 0;
-    memif_connection_t conn;
-    conn.msg_queue = NULL;
-    strncpy ((char *) conn.args.interface_name, TEST_IF_NAME, strlen (TEST_IF_NAME));
-
-    memif_msg_enq_connected (&conn);
-    memif_msg_queue_elt_t *e = conn.msg_queue;
-    if (e->msg.type != MEMIF_MSG_TYPE_CONNECTED)
-    {
-        ERROR ("incorrect msg type");
-        rv = -1;
-    }
-    if (e->fd != -1)
-    {
-        ERROR ("invalid file descriptor");
-        rv = -1;
-    }
-    if (strncmp ((char *) e->msg.connected.if_name, TEST_IF_NAME, strlen (TEST_IF_NAME)) != 0)
-    {
-        ERROR ("incorrect interface name");
-        rv = -1;
-    }
-    return rv;
-}
-
-static int
-test_msg_send_disconnect ()
-{
-    int rv = 0, frv = 0;
-    memif_connection_t conn;
-    conn.fd = -1;
-
-    /* only possible fail if memif_msg_send fails...  */
-    /* obsolete without socket */
-    frv = memif_msg_send_disconnect (&conn);
-    if (frv < 0)
-    {
-        /*ERROR ("function error");*/
-        /*rv = -1;*/
-        rv = 0;
-    }
-    return rv;
-}
-
-static int
-test_msg_receive_connect ()
-{
-    int rv = 0, frv = 0;
+    int err;
     memif_connection_t conn;
     conn.regions = NULL;
-    conn.tx_queues = NULL;
-    conn.rx_queues = NULL;
+    memif_msg_t msg;
+    msg.type = MEMIF_MSG_TYPE_ADD_REGION;
+    msg.add_region.size = 2048;
+    msg.add_region.index = 0;
+
+    int fd = 5;
+
+    if ((err = memif_msg_receive_add_region (&conn, &msg, fd)) != MEMIF_ERR_SUCCESS)
+        ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
+
+    memif_region_t *mr = conn.regions;
+
+    ck_assert_uint_eq (mr->fd, fd);
+    ck_assert_uint_eq (mr->region_size, 2048);
+    ck_assert_ptr_eq (mr->shm, NULL);
+}
+END_TEST
+
+START_TEST (test_recv_add_ring)
+{
+    int err;
+    memif_connection_t conn;
+    int fd = 5;
     memif_msg_t msg;
 
+    msg.type = MEMIF_MSG_TYPE_ADD_RING;
+    memif_msg_add_ring_t *ar = &msg.add_ring;
+
+    ar->log2_ring_size = 10;
+    ar->region = 0;
+    ar->offset = 0;
+    ar->flags = 0;
+    ar->flags |= MEMIF_MSG_ADD_RING_FLAG_S2M;
+
+    if ((err = memif_msg_receive_add_ring (&conn, &msg, fd)) != MEMIF_ERR_SUCCESS)
+        ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
+
+
+    ar->offset = 2048;
+    ar->flags &= ~MEMIF_MSG_ADD_RING_FLAG_S2M;
+
+    if ((err = memif_msg_receive_add_ring (&conn, &msg, fd)) != MEMIF_ERR_SUCCESS)
+        ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
+    
+}
+END_TEST
+
+START_TEST (test_recv_connect)
+{
+    int err;
+    memif_conn_handle_t c = NULL;
+    memif_conn_args_t args;
+    memset (&args, 0, sizeof (args));
+
+    args.interface_id = 0;
+    args.is_master = 0;
+    args.mode = 0;
+
+    if ((err = memif_init (control_fd_update)) != MEMIF_ERR_SUCCESS)
+        ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
+
+    if ((err = memif_create (&c, &args, on_connect,
+                on_disconnect, on_interrupt, NULL)) != MEMIF_ERR_SUCCESS)
+        ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
+
+    memif_connection_t *conn = (memif_connection_t *) c;
+
+    if ((err = memif_init_regions_and_queues (conn)) != MEMIF_ERR_SUCCESS)
+        ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
+
+    memif_msg_t msg;
+    memset (&msg, 0, sizeof (msg));
     msg.type = MEMIF_MSG_TYPE_CONNECT;
-    strncpy ((char *) msg.connect.if_name, TEST_IF_NAME, strlen (TEST_IF_NAME));
-    frv = memif_msg_receive_connect (&conn, &msg);
-    if (frv < 0)
-    {
-        /* fail only if memif_connect1 fails
-            (obsolete test) */
-        ERROR ("function error");
-        rv = -1;
-    }
-    if (strncmp ((char *) conn.remote_name, TEST_IF_NAME, strlen (TEST_IF_NAME)) != 0 )
-    {
-        ERROR ("incorrect remote interface name");
-        rv = -1;
-    }
-    return rv;
-}
 
-static int
-test_msg_receive_connected ()
+    memset (msg.connect.if_name, 0, sizeof (msg.connect.if_name));
+    strncpy ((char *) msg.connect.if_name, TEST_IF_NAME, strlen (TEST_IF_NAME));
+
+    if ((err = memif_msg_receive_connect (conn, &msg)) != MEMIF_ERR_SUCCESS)
+        ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
+
+    ck_assert_str_eq (conn->remote_if_name, TEST_IF_NAME);
+}
+END_TEST
+
+START_TEST (test_recv_connected)
 {
-    int rv = 0, frv = 0;
-    memif_connection_t conn;
-    conn.regions = NULL;
-    conn.tx_queues = NULL;
-    conn.rx_queues = NULL;
+    int err;
+    memif_conn_handle_t c = NULL;
+    memif_conn_args_t args;
+    memset (&args, 0, sizeof (args));
+
+    args.interface_id = 0;
+    args.is_master = 0;
+    args.mode = 0;
+
+    if ((err = memif_init (control_fd_update)) != MEMIF_ERR_SUCCESS)
+        ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
+
+    if ((err = memif_create (&c, &args, on_connect,
+                on_disconnect, on_interrupt, NULL)) != MEMIF_ERR_SUCCESS)
+        ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
+
+    memif_connection_t *conn = (memif_connection_t *) c;
+
+    if ((err = memif_init_regions_and_queues (conn)) != MEMIF_ERR_SUCCESS)
+        ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
+
     memif_msg_t msg;
+    memset (&msg, 0, sizeof (msg));
+    msg.type = MEMIF_MSG_TYPE_CONNECT;
 
-    msg.type = MEMIF_MSG_TYPE_CONNECTED;
+    memset (msg.connect.if_name, 0, sizeof (msg.connect.if_name));
     strncpy ((char *) msg.connect.if_name, TEST_IF_NAME, strlen (TEST_IF_NAME));
-    
-    frv = memif_msg_receive_connected (&conn, &msg);
-    if (frv < 0)
-    {
-        /* fail only if memif_connect1 fails
-            (obsolete test) */
-        ERROR ("function error");
-        rv = -1;
-    }
-    if (strncmp ((char *) conn.remote_name, TEST_IF_NAME, strlen (TEST_IF_NAME)) != 0 )
-    {
-        ERROR ("incorrect remote interface name");
-        rv = -1;
-    }
-    return rv;
-}
 
-static int
-test_msg_receive_disconnect ()
+    if ((err = memif_msg_receive_connected (conn, &msg)) != MEMIF_ERR_SUCCESS)
+        ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
+
+    ck_assert_str_eq (conn->remote_if_name, TEST_IF_NAME);
+}
+END_TEST
+
+START_TEST (test_recv_disconnect)
 {
-    int rv = 0, frv = 0;
+    int err;
     memif_connection_t conn;
     memif_msg_t msg;
     msg.type = MEMIF_MSG_TYPE_DISCONNECT;
-    strncpy ((char *) msg.disconnect.string, "DC", 2);
+    memset (msg.disconnect.string, 0, sizeof (msg.disconnect.string));
+    strncpy ((char *) msg.disconnect.string, "unit_test_dc", 12);
 
-    frv = memif_msg_receive_disconnect (&conn, &msg);
-    if (frv == 0)
-    {
-        /* function can only return -1 */
-        ERROR ("not possible");
-        rv = -1;
-    }
-    if (strncmp ((char *) conn.remote_disconnect_string, "DC", 2) != 0)
-    {
-        ERROR ("incorrect disconnect string");
-        rv = -1;
-    }
-    return rv;
+    if ((err = memif_msg_receive_disconnect (&conn, &msg)) != MEMIF_ERR_SUCCESS)
+        ck_assert_msg (err == MEMIF_ERR_DISCONNECT,
+                "err code: %u, err msg: %s", err, memif_strerror (err));
+
+    ck_assert_str_eq (conn.remote_disconnect_string, "unit_test_dc");
 }
+END_TEST
 
-int
-test_socket (uint16_t *s, uint16_t *f)
+Suite *
+socket_suite ()
 {
-    TEST_SET ("SOCKET.C");
+    Suite *s;
+    TCase *tc_msg_queue;
+    TCase *tc_msg_enq;
+    TCase *tc_msg_send;
+    TCase *tc_msg_recv;
+
+    /* create socket test suite */
+    s = suite_create ("Socket messaging");
     
-    if (test_msg_queue_add_pop () < 0)
-    {
-        (*f)++;
-        TEST_FAIL ("msg queue add/pop");
-    }
-    else
-    {
-        (*s)++;
-        TEST_OK ("msg queue add/pop");
-    }
-    if (test_msg_enq_ack () < 0)
-    {
-        (*f)++;
-        TEST_FAIL ("msg enq ack");
-    }
-    else
-    {
-        (*s)++;
-        TEST_OK ("msg enq ack");
-    }
-    if (test_msg_enq_init () < 0)
-    {
-        (*f)++;
-        TEST_FAIL ("msg enq init");
-    }
-    else
-    {
-        (*s)++;
-        TEST_OK ("msg enq init");
-    }
-    if (test_msg_enq_add_region () < 0)
-    {
-        (*f)++;
-        TEST_FAIL ("msg enq add region");
-    }
-    else
-    {
-        (*s)++;
-        TEST_OK ("msg enq add region");
-    }
-    if (test_msg_enq_add_ring () < 0)
-    {
-        (*f)++;
-        TEST_FAIL ("msg enq add ring");
-    }
-    else
-    {
-        (*s)++;
-        TEST_OK ("msg enq add ring");
-    }
-    if (test_msg_receive_hello () < 0)
-    {
-        (*f)++;
-        TEST_FAIL ("msg recv hello");
-    }
-    else
-    {
-        (*s)++;
-        TEST_OK ("msg recv hello");
-    }
-    if (test_msg_receive_init () < 0)
-    {
-        (*f)++;
-        TEST_FAIL ("msg recv init");
-    }
-    else
-    {
-        (*s)++;
-        TEST_OK ("msg recv init");
-    }
-    if (test_msg_receive_add_region () < 0)
-    {
-        (*f)++;
-        TEST_FAIL ("msg recv add region");
-    }
-    else
-    {
-        (*s)++;
-        TEST_OK ("msg recv add region");
-    }
-    if (test_msg_enq_connect () < 0)
-    {
-        (*f)++;
-        TEST_FAIL ("msg enq connect");
-    }
-    else
-    {
-        (*s)++;
-        TEST_OK ("msg enq connect");
-    }
-    if (test_msg_enq_connected () < 0)
-    {
-        (*f)++;
-        TEST_FAIL ("msg enq connected");
-    }
-    else
-    {
-        (*s)++;
-        TEST_OK ("msg enq connected");
-    }
-    if (test_msg_send_disconnect () < 0)
-    {
-        (*f)++;
-        TEST_FAIL ("msg send disconnect");
-    }
-    else
-    {
-        (*s)++;
-        TEST_OK ("msg send disconnect");
-    }
-    if (test_msg_receive_connect () < 0)
-    {
-        (*f)++;
-        TEST_FAIL ("msg recv connect");
-    }
-    else
-    {
-        (*s)++;
-        TEST_OK ("msg recv connect");
-    }
-    if (test_msg_receive_connected () < 0)
-    {
-        (*f)++;
-        TEST_FAIL ("msg recv connected");
-    }
-    else
-    {
-        (*s)++;
-        TEST_OK ("msg recv connected");
-    }
-    if (test_msg_receive_disconnect () < 0)
-    {
-        (*f)++;
-        TEST_FAIL ("msg recv disconnect");
-    }
-    else
-    {
-        (*s)++;
-        TEST_OK ("msg recv disconnect");
-    }
-    return 0;
+    /* create msg queue test case */
+    tc_msg_queue = tcase_create ("Message queue");
+    /* add tests to test case */
+    tcase_add_test (tc_msg_queue, test_msg_queue);
+
+    /* create msg enq test case */
+    tc_msg_enq = tcase_create ("Message enqueue");
+    /* add tests to test case */
+    tcase_add_test (tc_msg_enq, test_enq_ack);
+    tcase_add_test (tc_msg_enq, test_enq_init);
+    tcase_add_test (tc_msg_enq, test_enq_add_region);
+    tcase_add_test (tc_msg_enq, test_enq_add_ring);
+    tcase_add_test (tc_msg_enq, test_enq_connect);
+    tcase_add_test (tc_msg_enq, test_enq_connected);
+
+    /* create msg send test case */
+    tc_msg_send = tcase_create ("Message send");
+    /* add tests to test case */
+    tcase_add_test (tc_msg_send, test_send);
+    tcase_add_test (tc_msg_send, test_send_hello);
+    tcase_add_test (tc_msg_send, test_send_disconnect);
+
+    /* create msg recv test case */
+    tc_msg_recv = tcase_create ("Message receive");
+    /* add tests to test case */
+    tcase_add_test (tc_msg_recv, test_recv_hello);
+    tcase_add_test (tc_msg_recv, test_recv_init);
+    tcase_add_test (tc_msg_recv, test_recv_add_region);
+    tcase_add_test (tc_msg_recv, test_recv_add_ring);
+    tcase_add_test (tc_msg_recv, test_recv_connect);
+    tcase_add_test (tc_msg_recv, test_recv_connected);
+    tcase_add_test (tc_msg_recv, test_recv_disconnect);
+
+    /* add test cases to test suite */
+    suite_add_tcase (s, tc_msg_queue);
+    suite_add_tcase (s, tc_msg_enq);
+    suite_add_tcase (s, tc_msg_send);
+    suite_add_tcase (s, tc_msg_recv);
+
+    /* return socket test suite to test runner */
+    return s;
 }

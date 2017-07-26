@@ -1,4 +1,4 @@
-# Copyright (c) 2017 Pantheon technologies.
+# Copyright (c) 2017 Cisco and/or its affiliates.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at:
@@ -24,14 +24,15 @@ release:
 #
 # unit_test
 #
-unit_test_SOURCES = test/socket_test.c      \
-                    test/main_test.c        \
-                    test/unit_test.c        \
-                    src/socket.c            \
-                    src/main.c
+unit_test_SOURCES = test/unit_test.c \
+                    test/main_test.c \
+                    test/socket_test.c \
+                    src/main.c \
+                    src/socket.c
 # macro MEMIF_UNIT_TEST -> compile functions without static keyword
 # and declare them in header files, so they can be called from unit tests
-unit_test_CPPFLAGS = $(AM_CPPFLAGS) -Itest -Isrc -DMEMIF_UNIT_TEST -g
+unit_test_CPPFLAGS = $(AM_CPPFLAGS) -Itest -Isrc -DMEMIF_UNIT_TEST -g $(CHECK_CFLAGS)
+unit_test_LDADD = $(CHECK_LIBS)
 
 #
 # main lib

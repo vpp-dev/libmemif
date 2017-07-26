@@ -15,21 +15,48 @@
  *------------------------------------------------------------------
  */
 
+#include <main_test.h>
 #include <socket_test.h>
 
+int
+on_connect (memif_conn_handle_t conn, void *ctx)
+{
+    return 0;
+}
 
 int
-main (void)
+on_disconnect (memif_conn_handle_t conn, void *ctx)
 {
-    uint16_t s = 0, f = 0;
-
-/*    test_main (&s, &f);*/
-
-    test_socket (&s, &f);
-
-    INFO ("Success: %u Fail: %u", s, f);
-
-    if (f != 0)
-        return -1;
     return 0;
+}
+
+int
+on_interrupt (memif_conn_handle_t conn, void *ctx, uint16_t qid)
+{
+    return 0;
+}
+
+int
+control_fd_update (int fd, uint8_t events)
+{
+    return 0;
+}
+
+int main (void)
+{
+    int num_fail;
+    Suite *main, *socket;
+    SRunner *sr;
+
+    main = main_suite ();
+    socket = socket_suite ();
+
+    sr = srunner_create (main);
+
+    srunner_add_suite (sr, socket);
+
+    srunner_run_all (sr, CK_VERBOSE);
+    num_fail = srunner_ntests_failed (sr);
+    srunner_free (sr);
+    return (num_fail == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
 }

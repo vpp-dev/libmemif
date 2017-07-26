@@ -18,49 +18,21 @@
 #ifndef _UNIT_TEST_H_
 #define _UNIT_TEST_H_
 
-#include <stdio.h>  
-#include <string.h>
+#include <stdlib.h>
+#include <check.h>
 
-#define RED     "\x1b[31m"
-#define GREEN   "\x1b[32m"
-#define YELLOW  "\x1b[33m"
-#define DEFAULT "\x1b[0m"
-
-#define INFO(...) do {                                                          \
-                    printf (DEFAULT"info: "__VA_ARGS__);                        \
-                    printf ("\n");                                              \
-                } while (0)
-
-#define TEST_SET(...) do {                                                      \
-                        printf (YELLOW"TEST SET: "__VA_ARGS__);                 \
-                        printf (DEFAULT"\n");                                   \
-                        printf ("=============================================\n");  \
-                    } while (0)
-
-#define TEST_OK(...) do {                                                       \
-                        printf ("%-40s", DEFAULT"test: "__VA_ARGS__);           \
-                        printf ("\t"GREEN"OK!"DEFAULT"\n");                     \
-                    } while (0)
-
-#define TEST_FAIL(...) do {                                                     \
-                        printf ("%-40s", DEFAULT"test: "__VA_ARGS__);           \
-                        printf ("\t"RED"FAIL!"DEFAULT"\n");                     \
-                      } while (0)                                               \
-
-#define ERROR(...) do {                                                         \
-                        printf (RED"ERROR:"DEFAULT"%s:%d: ",__func__, __LINE__);\
-                        printf (__VA_ARGS__);                                   \
-                        printf ("\n");                                          \
-                    } while (0)
-
-#define UNIX_ERROR(...) do {                                                         \
-                        printf (RED"UNIX ERROR:"DEFAULT"%s:%d: ",__func__, __LINE__);\
-                        printf (__VA_ARGS__);                                   \
-                        printf ("\n");                                          \
-                    } while (0)
+#include <libmemif.h>
 
 #define TEST_APP_NAME "unit_test_app"
 #define TEST_IF_NAME  "unit_test_if"
 #define TEST_SECRET   "psst"
+
+int on_connect (memif_conn_handle_t conn, void *ctx);
+
+int on_disconnect (memif_conn_handle_t conn, void *ctx);
+
+int on_interrupt (memif_conn_handle_t conn, void *ctx, uint16_t qid);
+
+int control_fd_update (int fd, uint8_t events);
 
 #endif /* _UNIT_TEST_H_ */

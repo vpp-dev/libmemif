@@ -15,11 +15,11 @@
  *------------------------------------------------------------------
  */
 
-#ifndef _SOCKET_TEST_H_
-#define _SOCKET_TEST_H_
+#ifndef _MAIN_TEST_H_
+#define _MAIN_TEST_H_
 
 #include <unit_test.h>
 
-Suite * socket_suite ();
+Suite * main_suite ();
 
-#endif /* _SOCKET_TEST_H_ */
+#endif /* _MAIN_TEST_H_ */
