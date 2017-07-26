@@ -31,6 +31,7 @@ typedef enum
 /* SYSCALL ERRORS */
     MEMIF_ERR_SYSCALL,              /* other syscall error */
     MEMIF_ERR_ACCES,                /* permission denied */
+    MEMIF_ERR_NO_FILE,              /* file does not exist */
     MEMIF_ERR_FILE_LIMIT,           /* system open file limit */
     MEMIF_ERR_PROC_FILE_LIMIT,      /* process open file limit */
     MEMIF_ERR_ALREADY,              /* connection already requested */
@@ -51,6 +52,7 @@ typedef enum
     MEMIF_ERR_NOBUF_DET,            /* memif details needs larger buffer */
     MEMIF_ERR_INT_WRITE,            /* send interrupt error */
     MEMIF_ERR_MFMSG,                /* malformed msg received */
+    MEMIF_ERR_QID,                  /* invalid queue id */
 /* MEMIF PROTO ERRORS */
     MEMIF_ERR_PROTO,                /* incompatible protocol version */
     MEMIF_ERR_ID,                   /* unmatched interface id */

@@ -164,8 +164,8 @@ memif_msg_enq_init (memif_connection_t *c)
 static_fn int
 memif_msg_enq_add_region (memif_connection_t *c, uint8_t region_index)
 {
-    /* TODO: support multiple regions */
-    memif_region_t *mr = c->regions;
+    /* maybe check if region is valid? */
+    memif_region_t *mr = &c->regions[region_index];
 
     memif_msg_queue_elt_t *e =
         (memif_msg_queue_elt_t *) malloc (sizeof (memif_msg_queue_elt_t));
@@ -214,14 +214,14 @@ memif_msg_enq_add_ring (memif_connection_t *c, uint8_t index, uint8_t dir)
     /* TODO: support multiple rings */
     memif_queue_t *mq;
     if (dir == MEMIF_RING_M2S)
-        mq = c->rx_queues;
+        mq = &c->rx_queues[index];
     else
-        mq = c->tx_queues;
+        mq = &c->tx_queues[index];
 
     e->fd = mq->int_fd;
     ar->index = index;
     ar->offset = mq->offset;
-    ar->region = index;
+    ar->region = mq->region;
     ar->log2_ring_size = mq->log2_ring_size;
     ar->flags = (dir == MEMIF_RING_S2M) ? MEMIF_MSG_ADD_RING_FLAG_S2M : 0;
 
@@ -346,6 +346,7 @@ memif_msg_receive_hello (memif_connection_t *c, memif_msg_t *msg)
     /* use nested struct c->run containing following variables?
         (this would be used to adjust shared memory information while keeping
         configured values intact) */
+    DBG ("%u", h->max_s2m_ring);
     c->args.num_s2m_rings = memif_min (h->max_s2m_ring + 1,
                                     c->args.num_s2m_rings);
     c->args.num_m2s_rings = memif_min (h->max_m2s_ring + 1,
@@ -463,15 +464,13 @@ memif_msg_receive_add_region (memif_connection_t *c, memif_msg_t *msg, int fd)
     if (ar->index > MEMIF_MAX_REGION)
         return MEMIF_ERR_MAXREG;
 
-    mr = (memif_region_t *) malloc (sizeof (memif_region_t ));
+    mr = (memif_region_t *) realloc (c->regions, sizeof (memif_region_t));
     if (mr == NULL)
         return memif_syscall_error_handler (errno);
-    mr->fd = fd;
-    mr->region_size = ar->size;
-    mr->shm = NULL;
-
-    /* TODO: support multiple regions */
     c->regions = mr;
+    c->regions[ar->index].fd = fd;
+    c->regions[ar->index].region_size = ar->size;
+    c->regions[ar->index].shm = NULL;
 
     return MEMIF_ERR_SUCCESS; /* 0 */
 }
@@ -533,7 +532,7 @@ memif_msg_receive_connect (memif_connection_t *c, memif_msg_t *msg)
 
     int err;
     err = memif_connect1 (c);
-    if (err != MEMIF_ERR_SUCCESS) /* 0 */
+    if (err != MEMIF_ERR_SUCCESS)
         return err;
 
     strncpy ((char *) c->remote_if_name, (char *) cm->if_name, strlen ((char *) cm->if_name));
@@ -553,7 +552,7 @@ memif_msg_receive_connected (memif_connection_t *c, memif_msg_t *msg)
 
     int err;
     err = memif_connect1 (c);
-    if (err != MEMIF_ERR_SUCCESS) /* 0 */
+    if (err != MEMIF_ERR_SUCCESS)
         return err;
 
     strncpy ((char *) c->remote_if_name, (char *) cm->if_name, strlen ((char *) cm->if_name));
@@ -569,6 +568,7 @@ memif_msg_receive_disconnect (memif_connection_t *c, memif_msg_t *msg)
 {
     memif_msg_disconnect_t *d = &msg->disconnect;
 
+    memset (c->remote_disconnect_string, 0, sizeof (c->remote_disconnect_string));
     strncpy ((char *) c->remote_disconnect_string, (char *) d->string,
         strlen ((char *) d->string));
 
@@ -589,7 +589,7 @@ memif_msg_receive (memif_connection_t *c)
     ssize_t size;
     int err = MEMIF_ERR_SUCCESS; /* 0 */
     int fd = -1;
-    int i = 0;
+    int i;
     
     iov[0].iov_base = (void *) &msg;
     iov[0].iov_len = sizeof (memif_msg_t);
@@ -644,11 +644,16 @@ memif_msg_receive (memif_connection_t *c)
                 return err;
             if ((err = memif_msg_enq_add_region (c, 0)) != MEMIF_ERR_SUCCESS)
                 return err;
-            /* TODO: support multiple rings */
-            if ((err = memif_msg_enq_add_ring (c, i, MEMIF_RING_S2M)) != MEMIF_ERR_SUCCESS)
-                return err;
-            if ((err = memif_msg_enq_add_ring (c, i, MEMIF_RING_M2S)) != MEMIF_ERR_SUCCESS)
-                return err;
+            for (i = 0; i < c->args.num_s2m_rings; i++)
+            {
+                if ((err = memif_msg_enq_add_ring (c, i, MEMIF_RING_S2M)) != MEMIF_ERR_SUCCESS)
+                    return err;
+            }
+            for (i = 0; i < c->args.num_m2s_rings; i++)
+            {
+                if ((err = memif_msg_enq_add_ring (c, i, MEMIF_RING_M2S)) != MEMIF_ERR_SUCCESS)
+                    return err;
+            }
             if ((err = memif_msg_enq_connect (c)) != MEMIF_ERR_SUCCESS)
                 return err;
             break;

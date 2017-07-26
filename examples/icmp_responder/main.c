@@ -76,6 +76,8 @@ typedef struct
     uint16_t index;
     /* memif conenction handle */
     memif_conn_handle_t conn;
+    /* transmit queue id */
+    uint16_t tx_qid;
     /* tx buffers */
     memif_buffer_t *tx_bufs;
     /* allocated tx buffers counter */
@@ -265,7 +267,12 @@ icmpr_buffer_alloc (long n, uint16_t qid)
     uint16_t r;
     /* set data pointer to shared memory and set buffer_len to shared mmeory buffer len */
     err = memif_buffer_alloc (c->conn, qid, c->tx_bufs, n, &r);
-    INFO ("memif_buffer_alloc: %s", memif_strerror (err));
+    if (err != MEMIF_ERR_SUCCESS)
+    {
+        INFO ("memif_buffer_alloc: %s", memif_strerror (err));
+        c->tx_buf_num += r;
+        return -1;
+    }
     c->tx_buf_num += r;
     DBG ("allocated %d/%ld buffers, %u free buffers", r, n, MAX_MEMIF_BUFS - c->tx_buf_num);
     return 0;
@@ -280,7 +287,8 @@ icmpr_tx_burst (uint16_t qid)
     /* inform peer memif interface about data in shared memory buffers */
     /* mark memif buffers as free */
     err = memif_tx_burst (c->conn, qid, c->tx_bufs, c->tx_buf_num, &r);
-    INFO ("memif_tx_burst: %s", memif_strerror (err));
+    if (err != MEMIF_ERR_SUCCESS)
+        INFO ("memif_tx_burst: %s", memif_strerror (err));
     DBG ("tx: %d/%u", r, c->tx_buf_num);
     c->tx_buf_num -= r;
     return 0;
@@ -294,15 +302,25 @@ on_interrupt (memif_conn_handle_t conn, void *private_ctx, uint16_t qid)
     memif_connection_t *c = &memif_connection;
     int err;
     uint16_t rx;
+    uint16_t fb;
     /* receive data from shared memory buffers */
     err = memif_rx_burst (c->conn, qid, c->rx_bufs, MAX_MEMIF_BUFS, &rx);
-    INFO ("memif_rx_burst: %s", memif_strerror (err));
+    if (err != MEMIF_ERR_SUCCESS)
+    {
+        INFO ("memif_rx_burst: %s", memif_strerror (err));
+        c->rx_buf_num += rx;
+        goto error;
+    }
     c->rx_buf_num += rx;
 
     DBG ("received %d buffers. %u/%u alloc/free buffers",
                 rx, c->rx_buf_num, MAX_MEMIF_BUFS - c->rx_buf_num);
 
-    icmpr_buffer_alloc (rx, qid);
+    if (icmpr_buffer_alloc (rx, c->tx_qid) < 0)
+    {
+        INFO ("buffer_alloc error");
+        goto error;
+    }
     int i;
     for (i = 0; i < rx; i++)
     {
@@ -311,17 +329,26 @@ on_interrupt (memif_conn_handle_t conn, void *private_ctx, uint16_t qid)
                             &(c->tx_bufs + i)->data_len);
     }
 
-    uint16_t fb;
     /* mark memif buffers and shared memory buffers as free */
     err = memif_buffer_free (c->conn, qid, c->rx_bufs, rx, &fb);
-    INFO ("memif_buffer_free: %s", memif_strerror (err));
+    if (err != MEMIF_ERR_SUCCESS)
+        INFO ("memif_buffer_free: %s", memif_strerror (err));
     c->rx_buf_num -= fb;
 
     DBG ("freed %d buffers. %u/%u alloc/free buffers",
                 fb, c->rx_buf_num, MAX_MEMIF_BUFS - c->rx_buf_num);
 
-    icmpr_tx_burst (qid);
+    icmpr_tx_burst (c->tx_qid);
 
+    return 0;
+
+error:
+    err = memif_buffer_free (c->conn, qid, c->rx_bufs, rx, &fb);
+    if (err != MEMIF_ERR_SUCCESS)
+        INFO ("memif_buffer_free: %s", memif_strerror (err));
+    c->rx_buf_num -= fb;
+    DBG ("freed %d buffers. %u/%u alloc/free buffers",
+                fb, c->rx_buf_num, MAX_MEMIF_BUFS - c->rx_buf_num);
     return 0;
 }
 
@@ -335,8 +362,8 @@ icmpr_memif_create (int is_master)
     args.is_master = is_master;
     args.log2_ring_size = 10;
     args.buffer_size = 2048;
-    args.num_s2m_rings = 1;
-    args.num_m2s_rings = 1;
+    args.num_s2m_rings = 2;
+    args.num_m2s_rings = 2;
     strncpy ((char *) args.interface_name, IF_NAME, strlen (IF_NAME));
     strncpy ((char *) args.instance_name, APP_NAME, strlen (APP_NAME));
     args.mode = 0;
@@ -349,7 +376,8 @@ icmpr_memif_create (int is_master)
        to identify connection. this context is returned with callbacks */
     int err = memif_create (&(&memif_connection)->conn,
                     &args, on_connect, on_disconnect, on_interrupt, NULL);
-    INFO ("memif_create: %s", memif_strerror (err));
+    if (err != MEMIF_ERR_SUCCESS)
+        INFO ("memif_create: %s", memif_strerror (err));
     return 0;
 }
 
@@ -359,7 +387,8 @@ icmpr_memif_delete ()
     int err;
     /* disconenct then delete memif connection */
     err = memif_delete (&(&memif_connection)->conn);
-    INFO ("memif_delete: %s", memif_strerror (err));
+    if (err != MEMIF_ERR_SUCCESS)
+        INFO ("memif_delete: %s", memif_strerror (err));
     return 0;
 }
 
@@ -384,6 +413,7 @@ print_help ()
     printf ("\tconn - create memif (slave-mode)\n");
     printf ("\tdel  - delete memif\n");
     printf ("\tshow - show connection details\n");
+    printf ("\ttx-qid <id> - set transmit queue id\n");
 }
 int
 icmpr_free ()
@@ -401,8 +431,10 @@ icmpr_free ()
 int
 user_input_handler ()
 {
+    memif_connection_t *c = &memif_connection;
     char *in = (char *) malloc (256);
     char *ui = fgets (in, 256, stdin);
+    char *end;
     if (in[0] == '\n')
         goto done;
     ui = strtok (in, " ");
@@ -431,6 +463,14 @@ user_input_handler ()
     else if (strncmp (ui, "show", 4) == 0)
     {
         print_memif_details ();
+        goto done;
+    }
+    else if (strncmp (ui, "tx-qid", 6) == 0)
+    {
+        ui = strtok (NULL, " ");
+        if (ui != NULL)
+            c->tx_qid = strtol (ui, &end, 10);
+        INFO ("tx-qid %u", c->tx_qid);
         goto done;
     }
     else
@@ -477,7 +517,8 @@ poll_event (int timeout)
             if (evt.events & EPOLLERR)
                 events |= MEMIF_FD_EVENT_ERROR;
             memif_err = memif_control_fd_handler (evt.data.fd, events);
-            INFO ("memif_control_fd_handler: %s", memif_strerror (memif_err));
+            if (memif_err != MEMIF_ERR_SUCCESS)
+                INFO ("memif_control_fd_handler: %s", memif_strerror (memif_err));
         }
         else if (evt.data.fd == 0)
         {
@@ -510,6 +551,8 @@ int main ()
 
     /* initialize global memif connection handle */
     c->conn = NULL;
+
+    c->tx_qid = 0;
     /* alloc memif buffers */
     c->rx_buf_num = 0;
     c->rx_bufs = (memif_buffer_t *) malloc (sizeof (memif_buffer_t) * MAX_MEMIF_BUFS);
@@ -522,7 +565,8 @@ int main ()
         all file descriptors and events will be passed to user in this callback */
     /* if callback is set to NULL libmemif will handle fd event polling */
     err = memif_init (control_fd_update);
-    INFO ("memif_init: %s", memif_strerror (err));
+    if (err != MEMIF_ERR_SUCCESS)
+        INFO ("memif_init: %s", memif_strerror (err));
 
     print_help ();
 
