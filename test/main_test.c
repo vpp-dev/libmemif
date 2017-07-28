@@ -1,6 +1,6 @@
 /*
  *------------------------------------------------------------------
- * Copyright (c) 2017 Pantheon technologies.
+ * Copyright (c) 2017 Cisco and/or its affiliates.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:
@@ -157,6 +157,95 @@ START_TEST (test_create)
 }
 END_TEST
 
+START_TEST (test_create_mult)
+{
+    int err;
+    memif_conn_handle_t conn = NULL;
+    memif_conn_handle_t conn1 = NULL;
+    memif_conn_args_t args;
+    memset (&args, 0, sizeof (args));
+
+    libmemif_main_t *lm = &libmemif_main;
+
+    if ((err = memif_init (control_fd_update)) != MEMIF_ERR_SUCCESS)
+        ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
+
+    strncpy ((char *) args.interface_name, TEST_IF_NAME, strlen (TEST_IF_NAME));
+    strncpy ((char *) args.instance_name, TEST_APP_NAME, strlen (TEST_APP_NAME));
+
+    if ((err = memif_create (&conn, &args, on_connect,
+                    on_disconnect, on_interrupt, NULL)) != MEMIF_ERR_SUCCESS)
+        ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
+
+    args.interface_id = 1;
+
+    if ((err = memif_create (&conn1, &args, on_connect,
+                    on_disconnect, on_interrupt, NULL)) != MEMIF_ERR_SUCCESS)
+        ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
+
+    memif_connection_t *c = (memif_connection_t *) conn;
+    memif_connection_t *c1 = (memif_connection_t *) conn1;
+
+    ck_assert_ptr_ne (c, NULL);
+    ck_assert_ptr_ne (c1, NULL);
+
+    ck_assert_uint_eq (c->args.interface_id, 0);
+    ck_assert_uint_eq (c->args.is_master, args.is_master);
+    ck_assert_uint_eq (c->args.mode, args.mode);
+    ck_assert_uint_eq (c1->args.interface_id, 1);
+    ck_assert_uint_eq (c1->args.is_master, args.is_master);
+    ck_assert_uint_eq (c1->args.mode, args.mode);
+
+    ck_assert_uint_eq (c->args.num_s2m_rings, MEMIF_DEFAULT_TX_QUEUES);
+    ck_assert_uint_eq (c->args.num_m2s_rings, MEMIF_DEFAULT_RX_QUEUES);
+    ck_assert_uint_eq (c->args.buffer_size, MEMIF_DEFAULT_BUFFER_SIZE);
+    ck_assert_uint_eq (c->args.log2_ring_size, MEMIF_DEFAULT_LOG2_RING_SIZE);
+    ck_assert_uint_eq (c1->args.num_s2m_rings, MEMIF_DEFAULT_TX_QUEUES);
+    ck_assert_uint_eq (c1->args.num_m2s_rings, MEMIF_DEFAULT_RX_QUEUES);
+    ck_assert_uint_eq (c1->args.buffer_size, MEMIF_DEFAULT_BUFFER_SIZE);
+    ck_assert_uint_eq (c1->args.log2_ring_size, MEMIF_DEFAULT_LOG2_RING_SIZE);
+
+    ck_assert_ptr_eq (c->msg_queue, NULL);
+    ck_assert_ptr_eq (c->regions, NULL);
+    ck_assert_ptr_eq (c->tx_queues, NULL);
+    ck_assert_ptr_eq (c->rx_queues, NULL);
+    ck_assert_ptr_eq (c1->msg_queue, NULL);
+    ck_assert_ptr_eq (c1->regions, NULL);
+    ck_assert_ptr_eq (c1->tx_queues, NULL);
+    ck_assert_ptr_eq (c1->rx_queues, NULL);
+
+    ck_assert_int_eq (c->fd, -1);
+    ck_assert_int_eq (c1->fd, -1);
+
+    ck_assert_ptr_ne (c->on_connect, NULL);
+    ck_assert_ptr_ne (c->on_disconnect, NULL);
+    ck_assert_ptr_ne (c->on_interrupt, NULL);
+    ck_assert_ptr_ne (c1->on_connect, NULL);
+    ck_assert_ptr_ne (c1->on_disconnect, NULL);
+    ck_assert_ptr_ne (c1->on_interrupt, NULL);
+
+    ck_assert_str_eq (c->args.interface_name, args.interface_name);
+    ck_assert_str_eq (c->args.instance_name, args.instance_name);
+    ck_assert_str_eq (c->args.socket_filename, SOCKET_FILENAME);
+    ck_assert_str_eq (c1->args.interface_name, args.interface_name);
+    ck_assert_str_eq (c1->args.instance_name, args.instance_name);
+    ck_assert_str_eq (c1->args.socket_filename, SOCKET_FILENAME);
+
+    struct itimerspec timer;
+    timerfd_gettime (lm->timerfd, &timer);
+    
+    ck_assert_msg (timer.it_interval.tv_sec == lm->arm.it_interval.tv_sec,
+                    "timerfd not armed!");
+
+    if (lm->timerfd > 0)
+        close (lm->timerfd);
+    lm->timerfd = -1;
+
+    memif_delete (&conn);
+    ck_assert_ptr_eq (conn, NULL);
+}
+END_TEST
+
 START_TEST (test_control_fd_handler)
 {
     int err;
@@ -188,6 +277,8 @@ START_TEST (test_control_fd_handler)
    
     register_fd_ready_fn (c, read_fn, write_fn, error_fn);
     c->fd = 69;
+    lm->control_list[0].fd = c->fd;
+    lm->control_list[0].conn = c;
  
     if ((err = memif_control_fd_handler (
                 c->fd, MEMIF_FD_EVENT_READ)) != MEMIF_ERR_SUCCESS)
@@ -740,7 +831,7 @@ START_TEST (test_disconnect_internal)
     if ((err = memif_init_regions_and_queues (c)) != MEMIF_ERR_SUCCESS)
         ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
 
-    if ((err = memif_disconnect_internal (c)) != MEMIF_ERR_SUCCESS)
+    if ((err = memif_disconnect_internal (c, 0)) != MEMIF_ERR_SUCCESS)
         ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
 
     ck_assert_int_eq (c->fd, -1);
@@ -782,6 +873,7 @@ main_suite ()
     tcase_add_test (tc_api, test_init);
     tcase_add_test (tc_api, test_init_epoll);
     tcase_add_test (tc_api, test_create);
+    tcase_add_test (tc_api, test_create_mult);
     tcase_add_test (tc_api, test_control_fd_handler);
     tcase_add_test (tc_api, test_buffer_alloc);
     tcase_add_test (tc_api, test_tx_burst);

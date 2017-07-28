@@ -1,6 +1,6 @@
 /*
  *------------------------------------------------------------------
- * Copyright (c) 2017 Pantheon technologies.
+ * Copyright (c) 2017 Cisco and/or its affiliates.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:
@@ -296,6 +296,7 @@ START_TEST (test_recv_hello)
     h->max_m2s_ring = 1;
     h->max_log2_ring_size = 14;
     strncpy ((char *) h->name, TEST_IF_NAME, strlen (TEST_IF_NAME));
+    memset (conn.remote_name, 0, sizeof (conn.remote_name));
 
     conn.args.num_s2m_rings = 4;
     conn.args.num_m2s_rings = 6;
@@ -420,6 +421,7 @@ START_TEST (test_recv_add_ring)
     ar->offset = 0;
     ar->flags = 0;
     ar->flags |= MEMIF_MSG_ADD_RING_FLAG_S2M;
+    ar->index = 1;
 
     if ((err = memif_msg_receive_add_ring (&conn, &msg, fd)) != MEMIF_ERR_SUCCESS)
         ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
