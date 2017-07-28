@@ -13,7 +13,7 @@ Shared memory packet interface (memif) provides high performance packet transmit
 - [x] Interrupt mode support
 - [x] File descriptor event polling in libmemif (optional)
   - [x] Simplify file descriptor event polling (one handler for control and interrupt channel)
-- [ ] Multiple connections
+- [x] Multiple connections
 - [x] Multipe queues
   - [ ] Multithread support
 - [ ] Master mode

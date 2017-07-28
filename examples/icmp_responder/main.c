@@ -67,7 +67,8 @@
                 } while (0)
 
 /* maximum tx/rx memif buffers */
-#define MAX_MEMIF_BUFS 256
+#define MAX_MEMIF_BUFS  256
+#define MAX_CONNS       2
 
 int epfd;
 
@@ -88,75 +89,90 @@ typedef struct
     /* allcoated rx buffers counter */
     /* number of rx buffers pointing to shared memory */
     uint16_t rx_buf_num;
+    /* interface ip address */
+    uint8_t ip_addr[4];
 } memif_connection_t;
 
-memif_connection_t memif_connection;
+memif_connection_t memif_connection[MAX_CONNS];
 
 static void
 print_memif_details ()
 {
-    memif_connection_t *c = &memif_connection;
+    memif_details_t md;
+    ssize_t buflen;
+    char *buf;
+    int err, i;
     printf ("MEMIF DETAILS\n");
     printf ("==============================\n");
-
-
-    memif_details_t md;
-    memset (&md, 0, sizeof (md));
-    ssize_t buflen = 2048;
-    char *buf = malloc (buflen);
-    memset (buf, 0, buflen);
-    int err;
-
-    err = memif_get_details (c->conn, &md, buf, buflen);
-    if (err != MEMIF_ERR_SUCCESS)
+    for (i = 0; i < MAX_CONNS; i++)
     {
-        INFO ("%s", memif_strerror (err));
-        if (err == MEMIF_ERR_NOCONN)
+        memif_connection_t *c = &memif_connection[i];
+        printf ("interface index: %d\n", i);
+
+        memset (&md, 0, sizeof (md));
+        buflen = 2048;
+        buf = malloc (buflen);
+        memset (buf, 0, buflen);
+
+        err = memif_get_details (c->conn, &md, buf, buflen);
+        if (err != MEMIF_ERR_SUCCESS)
         {
-            free (buf);
-            return;
+            if (err == MEMIF_ERR_NOCONN)
+            {
+                printf ("\tno connection\n");
+                free (buf);
+                continue;
+            }
+            else
+            {
+                INFO ("%s", memif_strerror (err));
+                free (buf);
+                continue;
+            }
         }
-    }
 
-    printf ("\tinterface name: %s\n",(char *) md.if_name);
-    printf ("\tapp name: %s\n",(char *) md.inst_name);
-    printf ("\tremote interface name: %s\n",(char *) md.remote_if_name);
-    printf ("\tremote app name: %s\n",(char *) md.remote_inst_name);
-    printf ("\tid: %u\n", md.id);
-    printf ("\tsecret: %s\n",(char *) md.secret);
-    printf ("\trole: ");
-    if (md.role)
-        printf ("slave\n");
-    else
-        printf ("master\n");
-    printf ("\tmode: ");
-    switch (md.mode)
-    {
-        case 0:
-            printf ("ethernet\n");
-            break;
-        case 1:
-            printf ("ip\n");
-            break;
-        case 2:
-            printf ("punt/inject\n");
-            break;
-        default:
-            printf ("unknown\n");
-            break;
-    }
-    printf ("\tsocket filename: %s\n",(char *) md.socket_filename);
-    printf ("\tring_size: %u\n", md.ring_size);
-    printf ("\tbuffer_size: %u\n", md.buffer_size);
-    printf ("\trx queues: %u\n", md.rx_queues);
-    printf ("\ttx queues: %u\n", md.tx_queues);
-    printf ("\tlink: ");
-    if (md.link_up_down)
-        printf ("up\n");
-    else
-        printf ("down\n");
+        printf ("\tinterface ip: %u.%u.%u.%u\n",
+                    c->ip_addr[0], c->ip_addr[1], c->ip_addr[2], c->ip_addr[3]);
+        printf ("\tinterface name: %s\n",(char *) md.if_name);
+        printf ("\tapp name: %s\n",(char *) md.inst_name);
+        printf ("\tremote interface name: %s\n",(char *) md.remote_if_name);
+        printf ("\tremote app name: %s\n",(char *) md.remote_inst_name);
+        printf ("\tid: %u\n", md.id);
+        printf ("\tsecret: %s\n",(char *) md.secret);
+        printf ("\trole: ");
+        if (md.role)
+            printf ("slave\n");
+        else
+            printf ("master\n");
+        printf ("\tmode: ");
+        switch (md.mode)
+        {
+            case 0:
+                printf ("ethernet\n");
+                break;
+            case 1:
+                printf ("ip\n");
+                break;
+            case 2:
+                printf ("punt/inject\n");
+                break;
+            default:
+                printf ("unknown\n");
+                break;
+        }
+        printf ("\tsocket filename: %s\n",(char *) md.socket_filename);
+        printf ("\tring_size: %u\n", md.ring_size);
+        printf ("\tbuffer_size: %u\n", md.buffer_size);
+        printf ("\trx queues: %u\n", md.rx_queues);
+        printf ("\ttx queues: %u\n", md.tx_queues);
+        printf ("\tlink: ");
+        if (md.link_up_down)
+            printf ("up\n");
+        else
+            printf ("down\n");
 
-    free (buf);
+        free (buf);
+    }
 }
 
 int
@@ -260,9 +276,9 @@ control_fd_update (int fd, uint8_t events)
 }
 
 int
-icmpr_buffer_alloc (long n, uint16_t qid)
+icmpr_buffer_alloc (long index, long n, uint16_t qid)
 {
-    memif_connection_t *c = &memif_connection;
+    memif_connection_t *c = &memif_connection[index];
     int err;
     uint16_t r;
     /* set data pointer to shared memory and set buffer_len to shared mmeory buffer len */
@@ -279,9 +295,9 @@ icmpr_buffer_alloc (long n, uint16_t qid)
 }
 
 int
-icmpr_tx_burst (uint16_t qid)
+icmpr_tx_burst (long index, uint16_t qid)
 {
-    memif_connection_t *c = &memif_connection;
+    memif_connection_t *c = &memif_connection[index];
     int err;
     uint16_t r;
     /* inform peer memif interface about data in shared memory buffers */
@@ -299,7 +315,13 @@ icmpr_tx_burst (uint16_t qid)
 int
 on_interrupt (memif_conn_handle_t conn, void *private_ctx, uint16_t qid)
 {
-    memif_connection_t *c = &memif_connection;
+    long index = *((long *) private_ctx);
+    memif_connection_t *c = &memif_connection[index];
+    if (c->index != index)
+    {
+        INFO ("invalid context: %ld/%u", index, c->index);
+        return 0;
+    }
     int err;
     uint16_t rx;
     uint16_t fb;
@@ -316,7 +338,7 @@ on_interrupt (memif_conn_handle_t conn, void *private_ctx, uint16_t qid)
     DBG ("received %d buffers. %u/%u alloc/free buffers",
                 rx, c->rx_buf_num, MAX_MEMIF_BUFS - c->rx_buf_num);
 
-    if (icmpr_buffer_alloc (rx, c->tx_qid) < 0)
+    if (icmpr_buffer_alloc (index, rx, c->tx_qid) < 0)
     {
         INFO ("buffer_alloc error");
         goto error;
@@ -326,7 +348,7 @@ on_interrupt (memif_conn_handle_t conn, void *private_ctx, uint16_t qid)
     {
         resolve_packet ((void *) (c->rx_bufs + i)->data,
                             (c->rx_bufs + i)->data_len, (void *) (c->tx_bufs + i)->data,
-                            &(c->tx_bufs + i)->data_len);
+                            &(c->tx_bufs + i)->data_len, c->ip_addr);
     }
 
     /* mark memif buffers and shared memory buffers as free */
@@ -338,7 +360,7 @@ on_interrupt (memif_conn_handle_t conn, void *private_ctx, uint16_t qid)
     DBG ("freed %d buffers. %u/%u alloc/free buffers",
                 fb, c->rx_buf_num, MAX_MEMIF_BUFS - c->rx_buf_num);
 
-    icmpr_tx_burst (c->tx_qid);
+    icmpr_tx_burst (index, c->tx_qid);
 
     return 0;
 
@@ -353,13 +375,25 @@ error:
 }
 
 int
-icmpr_memif_create (int is_master)
+icmpr_memif_create (long index)
 {
+    if (index >= MAX_CONNS)
+    {
+        INFO ("connection array overflow");
+        return 0;
+    }    
+    if (index < 0)
+    {
+        INFO ("don't even try...");
+        return 0;
+    }
+    memif_connection_t *c = &memif_connection[index];
+
     /* setting memif connection arguments */
     memif_conn_args_t args;
     int fd = -1;
     memset (&args, 0, sizeof (args));
-    args.is_master = is_master;
+    args.is_master = 0;
     args.log2_ring_size = 10;
     args.buffer_size = 2048;
     args.num_s2m_rings = 2;
@@ -371,22 +405,53 @@ icmpr_memif_create (int is_master)
          connect to VPP over memif. so default socket filename will be used */
     /* default socketfile = /run/vpp/memif.sock */
 
-    args.interface_id = 0;
+    args.interface_id = index;
     /* last argument for memif_create (void * private_ctx) is used by user
        to identify connection. this context is returned with callbacks */
-    int err = memif_create (&(&memif_connection)->conn,
-                    &args, on_connect, on_disconnect, on_interrupt, NULL);
+    long *ctx = malloc (sizeof (long));
+    *ctx = index;
+    int err = memif_create (&c->conn,
+                    &args, on_connect, on_disconnect, on_interrupt, ctx);
     if (err != MEMIF_ERR_SUCCESS)
+    {
         INFO ("memif_create: %s", memif_strerror (err));
+        return 0;
+    }
+
+    c->index = index;
+    /* tx queue id */
+    c->tx_qid = 0;
+    /* alloc memif buffers */
+    c->rx_buf_num = 0;
+    c->rx_bufs = (memif_buffer_t *) malloc (sizeof (memif_buffer_t) * MAX_MEMIF_BUFS);
+    c->tx_buf_num = 0;
+    c->tx_bufs = (memif_buffer_t *) malloc (sizeof (memif_buffer_t) * MAX_MEMIF_BUFS);
+
+    c->ip_addr[0] = 192;
+    c->ip_addr[1] = 168;
+    c->ip_addr[2] = c->index + 1;
+    c->ip_addr[3] = 2;
     return 0;
 }
 
 int
-icmpr_memif_delete ()
+icmpr_memif_delete (long index)
 {
+    if (index >= MAX_CONNS)
+    {
+        INFO ("connection array overflow");
+        return 0;
+    }
+    if (index < 0)
+    {
+        INFO ("don't even try...");
+        return 0;
+    }
+    memif_connection_t *c = &memif_connection[index];
+
     int err;
     /* disconenct then delete memif connection */
-    err = memif_delete (&(&memif_connection)->conn);
+    err = memif_delete (&c->conn);
     if (err != MEMIF_ERR_SUCCESS)
         INFO ("memif_delete: %s", memif_strerror (err));
     return 0;
@@ -410,28 +475,92 @@ print_help ()
     printf ("commands:\n");
     printf ("\thelp - prints this help\n");
     printf ("\texit - exit app\n");
-    printf ("\tconn - create memif (slave-mode)\n");
-    printf ("\tdel  - delete memif\n");
+    printf ("\tconn <index> - create memif (slave-mode)\n");
+    printf ("\tdel  <index> - delete memif\n");
     printf ("\tshow - show connection details\n");
-    printf ("\ttx-qid <id> - set transmit queue id\n");
+    printf ("\ttx-qid <id> - set transmit queue id (TODO)\n");
+    printf ("\tip-set <index> <ip-addr> - set interface ip address\n");
 }
 int
 icmpr_free ()
-{
+{ 
     /* application cleanup */
-    memif_connection_t *c = &memif_connection;
-    free (c->tx_bufs);
-    c->tx_bufs = NULL;
-    free (c->rx_bufs);
-    c->rx_bufs = NULL;
+    long i;
+    for (i = 0; i < MAX_CONNS; i++)
+    {
+        memif_connection_t *c = &memif_connection[i];
+        icmpr_memif_delete (i);
+        free (c->tx_bufs);
+        c->tx_bufs = NULL;
+        free (c->rx_bufs);
+        c->rx_bufs = NULL;
+    }
 
+    return 0;
+}
+
+int
+icmpr_set_ip (long index, char* ip)
+{
+    if (index >= MAX_CONNS)
+    {
+        INFO ("connection array overflow");
+        return 0;
+    }
+    if (index < 0)
+    {
+        INFO ("don't even try...");
+        return 0;
+    }
+    memif_connection_t *c = &memif_connection[index];
+    if (c->conn == NULL)
+    {
+        INFO ("no connection at index %ld", index);
+        return 0;
+    }
+
+    char *end;
+    char *ui;
+    uint8_t tmp[4];
+    ui = strtok (ip, ".");
+    if (ui == NULL)
+        goto error;
+    tmp[0] = strtol (ui, &end, 10);
+
+    ui = strtok (NULL, ".");
+    if (ui == NULL)
+        goto error;
+    tmp[1] = strtol (ui, &end, 10);
+
+    ui = strtok (NULL, ".");
+    if (ui == NULL)
+        goto error;
+    tmp[2] = strtol (ui, &end, 10);
+
+    ui = strtok (NULL, ".");
+    if (ui == NULL)
+        goto error;
+    tmp[3] = strtol (ui, &end, 10);
+
+    c->ip_addr[0] = tmp[0];
+    c->ip_addr[1] = tmp[1];
+    c->ip_addr[2] = tmp[2];
+    c->ip_addr[3] = tmp[3];
+
+    INFO ("memif %ld ip address set to %u.%u.%u.%u",
+            index, c->ip_addr[0], c->ip_addr[1], c->ip_addr[2], c->ip_addr[3]);
+
+    return 0;
+
+error:
+    INFO ("invalid ip address");
     return 0;
 }
 
 int
 user_input_handler ()
 {
-    memif_connection_t *c = &memif_connection;
+    int i;
     char *in = (char *) malloc (256);
     char *ui = fgets (in, 256, stdin);
     char *end;
@@ -441,7 +570,6 @@ user_input_handler ()
     if (strncmp (ui, "exit", 4) == 0)
     {
         free (in);
-        icmpr_memif_delete ();
         icmpr_free ();
         exit (EXIT_SUCCESS);
     }
@@ -452,12 +580,20 @@ user_input_handler ()
     }
     else if (strncmp (ui, "conn", 4) == 0)
     {
-        icmpr_memif_create (0);
+        ui = strtok (NULL, " ");
+        if (ui != NULL)
+            icmpr_memif_create (strtol (ui, &end, 10));
+        else
+            INFO ("expected id");
         goto done;
     }
     else if (strncmp (ui, "del", 3) == 0)
     {
-        icmpr_memif_delete ();
+        ui = strtok (NULL, " ");
+        if (ui != NULL)
+            icmpr_memif_delete (strtol (ui, &end, 10));
+        else
+            INFO ("expected id");
         goto done;
     }
     else if (strncmp (ui, "show", 4) == 0)
@@ -469,8 +605,16 @@ user_input_handler ()
     {
         ui = strtok (NULL, " ");
         if (ui != NULL)
-            c->tx_qid = strtol (ui, &end, 10);
-        INFO ("tx-qid %u", c->tx_qid);
+            /* TODO: set transmit qid */
+        goto done;
+    }
+    else if (strncmp (ui, "ip-set", 6) == 0)
+    {
+        ui = strtok (NULL, " ");
+        if (ui != NULL)
+            icmpr_set_ip (strtol (ui, &end, 10), strtok (NULL, " "));
+        else
+            INFO ("expected id");
         goto done;
     }
     else
@@ -488,7 +632,6 @@ done:
 int
 poll_event (int timeout)
 {
-    memif_connection_t *c = &memif_connection;
     struct epoll_event evt, *e;
     int app_err = 0, memif_err = 0, en = 0;
     int tmp, nfd;
@@ -546,18 +689,6 @@ int main ()
 {
     epfd = epoll_create (1);
     add_epoll_fd (0, EPOLLIN);
-
-    memif_connection_t *c = &memif_connection;
-
-    /* initialize global memif connection handle */
-    c->conn = NULL;
-
-    c->tx_qid = 0;
-    /* alloc memif buffers */
-    c->rx_buf_num = 0;
-    c->rx_bufs = (memif_buffer_t *) malloc (sizeof (memif_buffer_t) * MAX_MEMIF_BUFS);
-    c->tx_buf_num = 0;
-    c->tx_bufs = (memif_buffer_t *) malloc (sizeof (memif_buffer_t) * MAX_MEMIF_BUFS);
 
     /* initialize memory interface */
     int err;

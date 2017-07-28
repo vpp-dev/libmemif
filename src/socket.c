@@ -598,7 +598,9 @@ memif_msg_receive (memif_connection_t *c)
     mh.msg_control = ctl;
     mh.msg_controllen = sizeof (ctl);
 
+    DBG ("recvmsg fd %d", c->fd);
     size = recvmsg (c->fd, &mh, 0);
+    DBG ("done");
     if (size != sizeof (memif_msg_t))
     {
         if (size == 0)
@@ -716,7 +718,7 @@ memif_conn_fd_error (memif_connection_t *c)
     DBG ("connection fd error");
     strncpy ((char *) c->remote_disconnect_string, "connection fd error",
         19);
-    int err = memif_disconnect_internal (c);
+    int err = memif_disconnect_internal (c, 0);
     return err;
 }
 
@@ -725,10 +727,12 @@ int
 memif_conn_fd_read_ready (memif_connection_t *c)
 {
     int err;
+    DBG ("call recv");
     err = memif_msg_receive (c);
+    DBG ("recv finished");
     if (err != 0)
     {
-        err = memif_disconnect_internal (c);
+        err = memif_disconnect_internal (c, 0);
     }
     return err;
 }

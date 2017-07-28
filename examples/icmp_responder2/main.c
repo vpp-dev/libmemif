@@ -86,6 +86,8 @@ typedef struct
     /* allcoated rx buffers counter */
     /* number of rx buffers pointing to shared memory */
     uint16_t rx_buf_num;
+    /* interface ip address */
+    uint8_t ip_addr[4];
 } memif_connection_t;
 
 memif_connection_t memif_connection;
@@ -287,7 +289,7 @@ on_interrupt (memif_conn_handle_t conn, void *private_ctx, uint16_t qid)
     {
         resolve_packet ((void *) (c->rx_bufs + i)->data,
                             (c->rx_bufs + i)->data_len, (void *) (c->tx_bufs + i)->data,
-                            &(c->tx_bufs + i)->data_len);
+                            &(c->tx_bufs + i)->data_len, c->ip_addr);
     }
 
     uint16_t fb;
@@ -362,7 +364,10 @@ int main (int argc, char *argv[])
     c->rx_bufs = (memif_buffer_t *) malloc (sizeof (memif_buffer_t) * MAX_MEMIF_BUFS);
     c->tx_buf_num = 0;
     c->tx_bufs = (memif_buffer_t *) malloc (sizeof (memif_buffer_t) * MAX_MEMIF_BUFS);
-
+    c->ip_addr[0] = 192;
+    c->ip_addr[1] = 168;
+    c->ip_addr[2] = 1;
+    c->ip_addr[3] = 2;
     /* initialize memory interface */
     int err;
     /* if valid callback is passed as argument, fd event polling will be done by user

@@ -163,7 +163,7 @@ memif_strerror (int err_code)
 #define DBG_TX_BUF (0)
 #define DBG_RX_BUF (1)
 
-#if MEMIF_DBG_SHM
+#ifdef MEMIF_DBG_SHM
 static void
 print_bytes (void *data, uint16_t len, uint8_t q)
 {
@@ -293,6 +293,84 @@ memif_control_fd_update (int fd, uint8_t events)
     return memif_add_epoll_fd (fd, evt);
 }
 
+static int
+add_fd_list_elt (memif_fd_list_elt_t *e, memif_fd_list_type_t type)
+{
+    libmemif_main_t *lm = &libmemif_main;
+    memif_fd_list_elt_t *list =
+        (type == MEMIF_FD_LIST_CONTROL) ? lm->control_list : lm->interrupt_list;
+    uint16_t len =
+        (type == MEMIF_FD_LIST_CONTROL) ? lm->control_list_len : lm->interrupt_list_len;
+
+    int i;
+    for (i = 0; i < len; i++)
+    {
+        if (list[i].conn == NULL)
+        {
+            list[i].fd = e->fd;
+            list[i].conn = e->conn;
+            list[i].qid = e->qid;
+            return i;
+        }
+    }
+    memif_fd_list_elt_t *tmp;
+    tmp = realloc (list, sizeof (memif_fd_list_elt_t) * len * 2);
+    if (tmp == NULL)
+        return -1;
+
+    tmp[len].fd = e->fd;
+    tmp[len].conn = e->conn;
+    tmp[len].qid = e->qid;
+
+    if (type == MEMIF_FD_LIST_CONTROL)
+    {
+        lm->control_list = tmp;
+        lm->control_list_len *= 2;
+    }
+    else
+    {
+        lm->interrupt_list = tmp;
+        lm->interrupt_list_len *= 2;
+    }
+
+    DBG ("con: %u, int: %u", lm->control_list_len, lm->interrupt_list_len);
+
+    return len;
+}
+
+static int
+get_fd_list_elt (memif_fd_list_elt_t **e, memif_fd_list_elt_t *list, uint16_t len, int fd)
+{
+    int i;
+    for (i = 0; i < len; i++)
+    {
+        if (list[i].fd == fd)
+        {
+            *e = &list[i];
+            return 0;
+        }
+    }
+    *e = NULL;
+    return -1;
+}
+
+static int
+free_fd_list_elt (memif_fd_list_elt_t *list, uint16_t len, int fd)
+{
+    int i;
+    for (i = 0; i < len; i++)
+    {
+        if (list[i].fd == fd)
+        {
+            list[i].fd = -1;
+            list[i].conn = NULL;
+            return 0;
+        }
+    }
+
+    return -1;
+}
+
 static void
 memif_control_fd_update_register (memif_control_fd_update_t *cb)
 {
@@ -315,7 +393,26 @@ int memif_init (memif_control_fd_update_t *on_control_fd_update)
     }
 
     memset (&lm->ms, 0, sizeof (memif_socket_t));
-    lm->conn = NULL;
+
+    lm->control_list_len = 1;
+    lm->interrupt_list_len = 1;
+
+    lm->control_list = malloc (sizeof (memif_fd_list_elt_t) * lm->control_list_len);
+    lm->interrupt_list = malloc (sizeof (memif_fd_list_elt_t) * lm->interrupt_list_len);
+
+    int i;
+    for (i = 0; i < lm->control_list_len; i++)
+    {
+        lm->control_list[i].fd = -1;
+        lm->control_list[i].conn = NULL;
+    }
+    for (i = 0; i < lm->interrupt_list_len; i++)
+    {
+        lm->interrupt_list[i].fd = -1;
+        lm->interrupt_list[i].conn = NULL;
+    }
+
+    lm->disconn_slaves = 0;
 
     lm->timerfd = timerfd_create (CLOCK_REALTIME, TFD_NONBLOCK);
     if (lm->timerfd < 0)
@@ -363,6 +460,7 @@ memif_create (memif_conn_handle_t *c, memif_conn_args_t *args,
 {
     int err;
     int sockfd = -1;
+    memif_fd_list_elt_t list_elt;
     memif_connection_t *conn = (memif_connection_t *) *c;
     if (conn != NULL)
     {
@@ -449,13 +547,27 @@ memif_create (memif_conn_handle_t *c, memif_conn_args_t *args,
         strncpy ((char *) conn->args.secret, (char *) args->secret, l);
     }
 
-    if (timerfd_settime (lm->timerfd, 0, &lm->arm, NULL) < 0)
+    if (lm->disconn_slaves == 0)
     {
-        err = memif_syscall_error_handler (errno);
+        if (timerfd_settime (lm->timerfd, 0, &lm->arm, NULL) < 0)
+        {
+            err = memif_syscall_error_handler (errno);
+            goto error;
+        }
+    }
+
+    lm->disconn_slaves++;
+
+    list_elt.fd = -1;
+    *c = list_elt.conn = conn;
+    int index;
+    if ((index = add_fd_list_elt (&list_elt, MEMIF_FD_LIST_CONTROL)) < 0)
+    {
+        err = MEMIF_ERR_NOMEM;
         goto error;
     }
 
-    *c = lm->conn = conn;
+    conn->index = index;
 
     return 0;
 
@@ -471,11 +583,11 @@ error:
     return err;
 }
 
-/* TODO: support multiple interfaces */
 int
 memif_control_fd_handler (int fd, uint8_t events)
 {
     int i, rv, sockfd = -1, err = MEMIF_ERR_SUCCESS; /* 0 */
+    memif_fd_list_elt_t *e = NULL;
     memif_connection_t *conn;
     libmemif_main_t *lm = &libmemif_main;
     if (fd == lm->timerfd)
@@ -483,9 +595,14 @@ memif_control_fd_handler (int fd, uint8_t events)
         uint64_t b;
         ssize_t size;
         size = read (fd, &b, sizeof (b));
-            conn = lm->conn;
-            if (conn->fd < 0)
+        for (i = 0; i < 4; i++)
+        {
+            if ((lm->control_list[i].fd < 0) && (lm->control_list[i].conn != NULL))
             {
+                conn = lm->control_list[i].conn;
+                if (conn->args.is_master)
+                    continue;
+
                 struct sockaddr_un sun;
                 sockfd = socket (AF_UNIX, SOCK_SEQPACKET, 0);
                 if (sockfd < 0)
@@ -507,15 +624,19 @@ memif_control_fd_handler (int fd, uint8_t events)
                     conn->write_fn = memif_conn_fd_write_ready;
                     conn->error_fn = memif_conn_fd_error;
 
+                    lm->control_list[conn->index].fd = conn->fd;
+
                         lm->control_fd_update (
                                 sockfd, MEMIF_FD_EVENT_READ | MEMIF_FD_EVENT_WRITE);
 
-                    /* TODO: with multiple connections support,
-                        only disarm if there is no disconnected slave */
-                    if (timerfd_settime (lm->timerfd, 0, &lm->disarm, NULL) < 0)
+                    lm->disconn_slaves--;
+                    if (lm->disconn_slaves == 0)
                     {
-                        err = memif_syscall_error_handler (errno);
-                        goto error;
+                        if (timerfd_settime (lm->timerfd, 0, &lm->disarm, NULL) < 0)
+                        {
+                            err = memif_syscall_error_handler (errno);
+                            goto error;
+                        }
                     }
                 }
                 else
@@ -524,35 +645,35 @@ memif_control_fd_handler (int fd, uint8_t events)
                     goto error;
                 }
             }
+        }
     }
     else
     {
-        conn = lm->conn;
-        if (conn->rx_queues != NULL)
+        get_fd_list_elt (&e, lm->interrupt_list, lm->interrupt_list_len, fd);
+        if (e != NULL)
         {
-            if (fd == conn->rx_queues->int_fd)
-            {
-                conn->on_interrupt ((void *) conn, conn->private_ctx, 0);
-                return MEMIF_ERR_SUCCESS; /* 0 */
-            }
+            e->conn->on_interrupt ((void *) e->conn, e->conn->private_ctx, e->qid);
+            return MEMIF_ERR_SUCCESS;
         }
-        if (conn->fd == fd)
+
+        get_fd_list_elt (&e, lm->control_list, lm->control_list_len, fd);
+        if (e != NULL)
         {
             if (events & MEMIF_FD_EVENT_READ)
             {
-                err = conn->read_fn (conn);
+                err = e->conn->read_fn (e->conn);
                 if (err != MEMIF_ERR_SUCCESS)
                     return err;
             }
             if (events & MEMIF_FD_EVENT_WRITE)
             {
-                err = conn->write_fn (conn);
+                err = e->conn->write_fn (e->conn);
                 if (err != MEMIF_ERR_SUCCESS)
                     return err;
             }
             if (events & MEMIF_FD_EVENT_ERROR)
             {
-                err = conn->error_fn (conn);
+                err = e->conn->error_fn (e->conn);
                 if (err != MEMIF_ERR_SUCCESS)
                     return err;
             }
@@ -572,6 +693,7 @@ int
 memif_poll_event (int timeout)
 {
     libmemif_main_t *lm = &libmemif_main;
+    memif_fd_list_elt_t *elt;
     struct epoll_event evt, *e;
     int en = 0, err = MEMIF_ERR_SUCCESS; /* 0 */
     uint32_t events = 0;
@@ -587,25 +709,24 @@ memif_poll_event (int timeout)
     }
     if (en > 0)
     {
-        /* event on memif interrupt fd */
-        if (lm->conn->rx_queues != NULL)
+        get_fd_list_elt (&elt, lm->interrupt_list, lm->interrupt_list_len, evt.data.fd);
+        if (elt != NULL)
         {
-            if (evt.data.fd == lm->conn->rx_queues->int_fd)
-            {
-                lm->conn->on_interrupt ((void *) lm->conn, 
-                        lm->conn->private_ctx, 0);
-                return 0;
-            }
+            elt->conn->on_interrupt ((void *) elt->conn, elt->conn->private_ctx, elt->qid);
+            return 0;
         }
-        /* event of memif control fd */
-        /* convert epolle events to memif events */
-        if (evt.events & EPOLLIN)
-            events |= MEMIF_FD_EVENT_READ;
-        if (evt.events & EPOLLOUT)
-            events |= MEMIF_FD_EVENT_WRITE;
-        if (evt.events & EPOLLERR)
-            events |= MEMIF_FD_EVENT_ERROR;
-        err = memif_control_fd_handler (evt.data.fd, events);
+        get_fd_list_elt (&elt, lm->control_list, lm->control_list_len, evt.data.fd);
+        if (elt != NULL)
+        {
+            if (evt.events & EPOLLIN)
+                events |= MEMIF_FD_EVENT_READ;
+            if (evt.events & EPOLLOUT)
+                events |= MEMIF_FD_EVENT_WRITE;
+            if (evt.events & EPOLLERR)
+                events |= MEMIF_FD_EVENT_ERROR;
+            err = memif_control_fd_handler (evt.data.fd, events);
+            return err;
+        }
     }
     return 0;
 }
@@ -623,7 +744,7 @@ memif_msg_queue_free (memif_msg_queue_elt_t **e)
 
 /* send disconnect msg and close interface */
 int
-memif_disconnect_internal (memif_connection_t *c)
+memif_disconnect_internal (memif_connection_t *c, uint8_t is_del)
 {
     if (c == NULL)
     {
@@ -634,6 +755,7 @@ memif_disconnect_internal (memif_connection_t *c)
     int err = MEMIF_ERR_SUCCESS, i; /* 0 */
     memif_queue_t *mq;
     libmemif_main_t *lm = &libmemif_main;
+    memif_fd_list_elt_t *e;
 
     if (c->fd > 0)
     {
@@ -641,7 +763,13 @@ memif_disconnect_internal (memif_connection_t *c)
         lm->control_fd_update (c->fd, MEMIF_FD_EVENT_DEL);
         close (c->fd);
     }
-    c->fd = -1;
+    get_fd_list_elt (&e, lm->control_list, lm->control_list_len, c->fd);
+    if (e != NULL)
+    {
+        e->fd = c->fd = -1;
+        if (is_del)
+            e->conn = NULL;
+    }
 
     if (c->tx_queues != NULL)
     {
@@ -653,7 +781,12 @@ memif_disconnect_internal (memif_connection_t *c)
             {
                 if (mq->int_fd > 0)
                     close (mq->int_fd);
-                mq->int_fd = -1;
+                get_fd_list_elt (&e, lm->interrupt_list, lm->interrupt_list_len, mq->int_fd);
+                if (e != NULL)
+                {
+                    e->fd = mq->int_fd = -1;
+                    e->conn = NULL;
+                }
             }
         }
         free (c->tx_queues);
@@ -673,7 +806,12 @@ memif_disconnect_internal (memif_connection_t *c)
                     lm->control_fd_update (mq->int_fd, MEMIF_FD_EVENT_DEL);
                     close (mq->int_fd);
                 }
-                mq->int_fd = -1;
+                get_fd_list_elt (&e, lm->interrupt_list, lm->interrupt_list_len, mq->int_fd);
+                if (e != NULL)
+                {
+                    e->fd = mq->int_fd = -1;
+                    e->conn = NULL;
+                }
             }
         }
         free (c->rx_queues);
@@ -693,13 +831,15 @@ memif_disconnect_internal (memif_connection_t *c)
 
     memif_msg_queue_free (&c->msg_queue);
 
-    /* TODO: use timerfd_gettime to check if timer is armed
-        only arm if timer is disarmed */
-    if (timerfd_settime (lm->timerfd, 0, &lm->arm, NULL) < 0)
+    if (lm->disconn_slaves == 0)
     {
-        err = memif_syscall_error_handler (errno);
-        DBG_UNIX ("timerfd_settime: arm"); 
+        if (timerfd_settime (lm->timerfd, 0, &lm->arm, NULL) < 0)
+        {
+            err = memif_syscall_error_handler (errno);
+            DBG_UNIX ("timerfd_settime: arm"); 
+        }
     }
+    lm->disconn_slaves++;
 
     c->on_disconnect ((void *) c, c->private_ctx);
 
@@ -714,15 +854,18 @@ memif_delete (memif_conn_handle_t *conn)
     
     int err;
 
-    err = memif_disconnect_internal (c);
+    err = memif_disconnect_internal (c, 1);
     if (err == MEMIF_ERR_NOCONN)
         return err;
 
-    /* TODO: only disarm if this is the only disconnected slave */
-    if (timerfd_settime (lm->timerfd, 0, &lm->disarm, NULL) < 0)
+    lm->disconn_slaves--;
+    if (lm->disconn_slaves == 0)
     {
-        err = memif_syscall_error_handler (errno);
-        DBG ("timerfd_settime: disarm");
+        if (timerfd_settime (lm->timerfd, 0, &lm->disarm, NULL) < 0)
+        {
+            err = memif_syscall_error_handler (errno);
+            DBG ("timerfd_settime: disarm");
+        }
     }
 
     if (c->args.socket_filename)
@@ -801,6 +944,8 @@ memif_init_regions_and_queues (memif_connection_t *conn)
     uint64_t buffer_offset;
     memif_region_t *r;
     int i,j;
+    libmemif_main_t *lm = &libmemif_main;
+    memif_fd_list_elt_t e;
 
     conn->regions = (memif_region_t *) malloc (sizeof (memif_region_t));
     if (conn->regions == NULL)
@@ -817,10 +962,10 @@ memif_init_regions_and_queues (memif_connection_t *conn)
     
     if ((r->fd = memfd_create ("memif region 0", MFD_ALLOW_SEALING)) == -1)
         return memif_syscall_error_handler (errno);
-/*
+
     if ((fcntl (r->fd, F_ADD_SEALS, F_SEAL_SHRINK)) == -1)
         return memif_syscall_error_handler (errno);
-*/
+
     if ((ftruncate (r->fd, r->region_size)) == -1)
         return memif_syscall_error_handler (errno);
 
@@ -867,6 +1012,12 @@ memif_init_regions_and_queues (memif_connection_t *conn)
     {
         if ((mq[x].int_fd = eventfd (0, EFD_NONBLOCK)) < 0)
             return memif_syscall_error_handler (errno);
+        /* add int fd to interrupt fd list */
+        e.fd = mq[x].int_fd;
+        e.conn = conn;
+        e.qid = x;
+        add_fd_list_elt (&e, MEMIF_FD_LIST_INTERRUPT);
+
         mq[x].ring = memif_get_ring (conn, MEMIF_RING_S2M, x);
         DBG ("RING: %p I: %d", mq[x].ring, x);
         mq[x].log2_ring_size = conn->args.log2_ring_size;
@@ -884,6 +1035,12 @@ memif_init_regions_and_queues (memif_connection_t *conn)
     {
         if ((mq[x].int_fd = eventfd (0, EFD_NONBLOCK)) < 0)
             return memif_syscall_error_handler (errno);
+        /* add int fd to interrupt fd list */
+        e.fd = mq[x].int_fd;
+        e.conn = conn;
+        e.qid = x;
+        add_fd_list_elt (&e, MEMIF_FD_LIST_INTERRUPT);
+
         mq[x].ring = memif_get_ring (conn, MEMIF_RING_M2S, x);
         DBG ("RING: %p I: %d", mq[x].ring, x);
         mq[x].log2_ring_size = conn->args.log2_ring_size;

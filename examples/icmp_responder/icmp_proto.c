@@ -124,7 +124,7 @@ resolve_arp (void *arp)
 }   
 
 static ssize_t                                                                   
-resolve_eth_arp (struct ether_arp *eth_arp, void *eth_arp_resp)
+resolve_eth_arp (struct ether_arp *eth_arp, void *eth_arp_resp, uint8_t ip_addr[4])
 {
     struct ether_arp *resp = (struct ether_arp *) eth_arp_resp;
 
@@ -136,11 +136,6 @@ resolve_eth_arp (struct ether_arp *eth_arp, void *eth_arp_resp)
     memcpy (resp->arp_sha, (((struct ether_header *) (
             eth_arp_resp - sizeof (struct ether_header)))->ether_shost), 6);
 
-    uint8_t ip_addr[4];
-    ip_addr[0] = 192;
-    ip_addr[1] = 168;
-    ip_addr[2] = 1;
-    ip_addr[3] = 2;
     memcpy (resp->arp_spa, ip_addr, 4);
 
     return sizeof (struct ether_arp);
@@ -166,7 +161,7 @@ resolve_eth (struct ether_header *eth, void *eth_resp)
 }
 
 static ssize_t                                                                        
-resolve_ip (struct iphdr *ip, void *ip_resp)
+resolve_ip (struct iphdr *ip, void *ip_resp, uint8_t ip_addr[4])
 {
     struct iphdr *resp = (struct iphdr *) ip_resp;
     resp->ihl = 5;
@@ -178,10 +173,11 @@ resolve_ip (struct iphdr *ip, void *ip_resp)
     resp->frag_off = 0;
     resp->ttl = 0x40;
     resp->protocol = 1;
-    resp->saddr = 0xC0A80102;
-    resp->saddr = __bswap_32 (resp->saddr);
-    resp->daddr = 0xC0A80101;
-    resp->daddr = __bswap_32 (resp->daddr);
+    ((uint8_t *) &resp->saddr)[0] = ip_addr[0]; 
+    ((uint8_t *) &resp->saddr)[1] = ip_addr[1]; 
+    ((uint8_t *) &resp->saddr)[2] = ip_addr[2]; 
+    ((uint8_t *) &resp->saddr)[3] = ip_addr[3]; 
+    resp->daddr = ip->saddr;
     
     resp->check = cksum (resp, sizeof (struct iphdr));
 
@@ -203,7 +199,8 @@ resolve_icmp (struct icmphdr *icmp, void *icmp_resp)
 }   
 
 int 
-resolve_packet (void *in_pck, ssize_t in_size, void *out_pck, uint32_t *out_size)
+resolve_packet (void *in_pck, ssize_t in_size,
+                void *out_pck, uint32_t *out_size, uint8_t ip_addr[4])
 {
     struct ether_header *eh;
     struct ether_arp *eah;
@@ -217,7 +214,7 @@ resolve_packet (void *in_pck, ssize_t in_size, void *out_pck, uint32_t *out_size
     if (eh->ether_type == 0x0608)
     {
         eah = (struct ether_arp *) (in_pck + *out_size);
-        *out_size += resolve_eth_arp (eah, out_pck + *out_size);
+        *out_size += resolve_eth_arp (eah, out_pck + *out_size, ip_addr);
         
     }
     else if (eh->ether_type == 0x0008)
@@ -226,7 +223,7 @@ resolve_packet (void *in_pck, ssize_t in_size, void *out_pck, uint32_t *out_size
         print_packet (in_pck + *out_size);
 #endif
         ip = (struct iphdr *) (in_pck + *out_size);
-        *out_size += resolve_ip (ip, out_pck + *out_size);
+        *out_size += resolve_ip (ip, out_pck + *out_size, ip_addr);
         if (ip->protocol == 1)
         {
             icmp = (struct icmphdr *) (in_pck + *out_size);

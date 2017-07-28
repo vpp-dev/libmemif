@@ -78,6 +78,12 @@
 
 #endif /* MEMIF_DBG */
 
+typedef enum
+{
+    MEMIF_FD_LIST_CONTROL,
+    MEMIF_FD_LIST_INTERRUPT
+} memif_fd_list_type_t;
+
 typedef struct
 {
     void *shm;
@@ -117,6 +123,7 @@ typedef int (memif_fn) (memif_connection_t *conn);
 
 typedef struct memif_connection
 {
+    uint16_t index;
     memif_conn_args_t args;
 
     int fd;
@@ -155,18 +162,33 @@ typedef struct
 
 /*
  * WIP
+ */
+typedef struct
+{
+    int fd;
+    memif_connection_t *conn;
+    /* used only in interrupt list */
+    uint8_t qid;
+} memif_fd_list_elt_t;
+
+/*
+ * WIP
  */ 
-/* probably function like memif_cleanup () will need to be called
-    close timerfd, free struct libmemif_main and its nested structures */
+/* probably function like memif_cleanup () will need to be called to close timerfd */
 typedef struct
 {
     memif_control_fd_update_t *control_fd_update;
     int timerfd;
     struct itimerspec arm, disarm;
+    uint16_t disconn_slaves;
 
-    /* TODO: update to arrays support multiple connections */
+    /* master iomplementation... */    
     memif_socket_t ms;
-    memif_connection_t *conn;
+
+    uint16_t control_list_len;
+    uint16_t interrupt_list_len;
+    memif_fd_list_elt_t *control_list;
+    memif_fd_list_elt_t *interrupt_list;
 } libmemif_main_t;
 
 extern libmemif_main_t libmemif_main;
@@ -180,7 +202,7 @@ int memif_connect1 (memif_connection_t *c);
 /* memory map region, initalize rings and queues */
 int memif_init_regions_and_queues (memif_connection_t *c);
 
-int memif_disconnect_internal (memif_connection_t *c);
+int memif_disconnect_internal (memif_connection_t *c, uint8_t is_del);
 
 /* map errno to memif error code */
 int memif_syscall_error_handler (int err_code);
