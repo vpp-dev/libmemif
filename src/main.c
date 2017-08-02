@@ -452,6 +452,18 @@ memif_get_ring (memif_connection_t *conn, memif_ring_type_t type, uint16_t ring_
 }
 
 int
+memif_set_rx_mode (memif_conn_handle_t c, memif_rx_mode_t rx_mode, uint16_t qid)
+{
+    memif_connection_t *conn = (memif_connection_t *) c;
+    if (conn == NULL)
+        return MEMIF_ERR_NOCONN;
+
+    conn->rx_queues[qid].ring->flags = rx_mode;
+    DBG ("rx_mode flag: %u", conn->rx_queues[qid].ring->flags);
+    return MEMIF_ERR_SUCCESS;
+}
+
+int
 memif_create (memif_conn_handle_t *c, memif_conn_args_t *args,
               memif_connection_update_t *on_connect,
               memif_connection_update_t *on_disconnect,
@@ -757,6 +769,8 @@ memif_disconnect_internal (memif_connection_t *c, uint8_t is_del)
     libmemif_main_t *lm = &libmemif_main;
     memif_fd_list_elt_t *e;
 
+    c->on_disconnect ((void *) c, c->private_ctx);
+
     if (c->fd > 0)
     {
         memif_msg_send_disconnect (c, c->remote_disconnect_string, 1);
@@ -841,7 +855,6 @@ memif_disconnect_internal (memif_connection_t *c, uint8_t is_del)
     }
     lm->disconn_slaves++;
 
-    c->on_disconnect ((void *) c, c->private_ctx);
 
     return err;
 }
@@ -979,6 +992,7 @@ memif_init_regions_and_queues (memif_connection_t *conn)
         DBG ("RING: %p I: %d", ring, i);
         ring->head = ring->tail = 0;
         ring->cookie = MEMIF_COOKIE;
+        ring->flags = 0;
         for (j = 0; j < (1 << conn->args.log2_ring_size); j++)
         {
             uint16_t slot = i * (1 << conn->args.log2_ring_size) + j;
@@ -994,6 +1008,7 @@ memif_init_regions_and_queues (memif_connection_t *conn)
         DBG ("RING: %p I: %d", ring, i);
         ring->head = ring->tail = 0;
         ring->cookie = MEMIF_COOKIE;
+        ring->flags = 0;
         for (j = 0; j < (1 << conn->args.log2_ring_size); j++)
         {
             uint16_t slot = (i + conn->args.num_s2m_rings) * (1 << conn->args.log2_ring_size) + j;

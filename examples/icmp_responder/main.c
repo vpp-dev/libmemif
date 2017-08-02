@@ -338,7 +338,7 @@ on_interrupt (memif_conn_handle_t conn, void *private_ctx, uint16_t qid)
     DBG ("received %d buffers. %u/%u alloc/free buffers",
                 rx, c->rx_buf_num, MAX_MEMIF_BUFS - c->rx_buf_num);
 
-    if (icmpr_buffer_alloc (index, rx, c->tx_qid) < 0)
+    if (icmpr_buffer_alloc (index, rx, qid) < 0)
     {
         INFO ("buffer_alloc error");
         goto error;
@@ -360,7 +360,7 @@ on_interrupt (memif_conn_handle_t conn, void *private_ctx, uint16_t qid)
     DBG ("freed %d buffers. %u/%u alloc/free buffers",
                 fb, c->rx_buf_num, MAX_MEMIF_BUFS - c->rx_buf_num);
 
-    icmpr_tx_burst (index, c->tx_qid);
+    icmpr_tx_burst (index, qid);
 
     return 0;
 
@@ -478,7 +478,6 @@ print_help ()
     printf ("\tconn <index> - create memif (slave-mode)\n");
     printf ("\tdel  <index> - delete memif\n");
     printf ("\tshow - show connection details\n");
-    printf ("\ttx-qid <id> - set transmit queue id (TODO)\n");
     printf ("\tip-set <index> <ip-addr> - set interface ip address\n");
 }
 int
@@ -558,6 +557,41 @@ error:
 }
 
 int
+icmpr_set_rx_mode (long index, long qid, char* mode)
+{
+    if (index >= MAX_CONNS)
+    {
+        INFO ("connection array overflow");
+        return 0;
+    }
+    if (index < 0)
+    {
+        INFO ("don't even try...");
+        return 0;
+    }
+    memif_connection_t *c = &memif_connection[index];
+
+    if (c->conn == NULL)
+    {
+        INFO ("no connection at index %ld", index);
+        return 0;
+    }
+
+    if (strncmp (mode, "interrupt", 9) == 0)
+    {
+        memif_set_rx_mode (c->conn, MEMIF_RX_MODE_INTERRUPT, qid);
+    }
+
+    else if (strncmp (mode, "polling", 7) == 0)
+    {
+        memif_set_rx_mode (c->conn, MEMIF_RX_MODE_POLLING, qid);
+    }
+    else
+        INFO ("expected rx mode <interrupt|polling>");
+    return 0;
+}
+
+int
 user_input_handler ()
 {
     int i;
@@ -601,13 +635,6 @@ user_input_handler ()
         print_memif_details ();
         goto done;
     }
-    else if (strncmp (ui, "tx-qid", 6) == 0)
-    {
-        ui = strtok (NULL, " ");
-        if (ui != NULL)
-            /* TODO: set transmit qid */
-        goto done;
-    }
     else if (strncmp (ui, "ip-set", 6) == 0)
     {
         ui = strtok (NULL, " ");
@@ -616,6 +643,24 @@ user_input_handler ()
         else
             INFO ("expected id");
         goto done;
+    }
+    else if (strncmp (ui, "rx-mode", 7) == 0)
+    {
+        ui = strtok (NULL, " ");
+        long a;
+        if (ui != NULL)
+            a = strtol (ui, &end, 10);
+        else
+        {
+            INFO ("expected id");
+            goto done;
+        }
+        ui = strtok (NULL, " ");
+        if (ui != NULL)
+            icmpr_set_rx_mode (a, strtol (ui, &end, 10), strtok (NULL, " "));
+        else
+            INFO ("expected qid");
+        goto done;        
     }
     else
     {

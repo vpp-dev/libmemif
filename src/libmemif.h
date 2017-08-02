@@ -192,6 +192,18 @@ typedef struct
     uint8_t link_up_down; /* 1 = up, 0 = down */
 } memif_details_t;
 
+/* memif receive mode */
+typedef enum
+{
+    MEMIF_RX_MODE_INTERRUPT = 0,
+    MEMIF_RX_MODE_POLLING
+} memif_rx_mode_t;
+
+/** \brief Memif set rx mode
+    @param rx_mode - receive mode. 0 = interrupt, 1 = polling
+*/
+int memif_set_rx_mode (memif_conn_handle_t c, memif_rx_mode_t rx_mode, uint16_t qid);
+
 /** \brief Memif strerror
     @param - err_code - error code
 
