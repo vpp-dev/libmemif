@@ -76,8 +76,11 @@ int epfd;
 
 typedef struct
 {
+    /* thread id */
     uint8_t id;
+    /* memif connection index */
     uint16_t index;
+    /* id of queue to be handled by thread */
     uint8_t rx_qid;
 } memif_thread_data_t;
 
@@ -86,8 +89,6 @@ typedef struct
     uint16_t index;
     /* memif conenction handle */
     memif_conn_handle_t conn;
-    /* transmit queue id */
-    uint16_t tx_qid;
     /* tx buffers */
     memif_buffer_t *tx_bufs;
     /* allocated tx buffers counter */
@@ -104,10 +105,13 @@ typedef struct
     uint8_t pending_del;
 } memif_connection_t;
 
-memif_thread_data_t thread_data[MAX_THREADS];
 memif_connection_t memif_connection[MAX_CONNS];
+
+/* thread data specific for each thread */
+memif_thread_data_t thread_data[MAX_THREADS];
 pthread_t thread[MAX_THREADS];
-pthread_mutex_t memif_mutex;
+/* mutex specific for each connection */
+pthread_mutex_t memif_mutex[MAX_CONNS];
 
 static void
 print_memif_details ()
@@ -304,7 +308,9 @@ memif_rx_poll (void *ptr)
             pthread_exit (NULL);
         }
 
-        pthread_mutex_lock (&memif_mutex);
+        /* threads are operating different rings in shared memory, so there is no need to regulate access to it */
+        /* in this example, there are memif buffers per connection, so access needs to be regulated, as all queues are using same buffers */
+        pthread_mutex_lock (&memif_mutex[data->index]);
 
         /* receive data from shared memory buffers */
         err = memif_rx_burst (c->conn, data->rx_qid, c->rx_bufs, MAX_MEMIF_BUFS, &rx);
@@ -317,16 +323,16 @@ memif_rx_poll (void *ptr)
         c->rx_buf_num += rx;
         if (rx == 0)
         {
-            pthread_mutex_unlock (&memif_mutex);
+            pthread_mutex_unlock (&memif_mutex[data->index]);
             continue;
         }
 
-        INFO ("thread id: %u", data->id);
+        DBG ("thread id: %u", data->id);
 
         DBG ("received %d buffers. %u/%u alloc/free buffers",
                     rx, c->rx_buf_num, MAX_MEMIF_BUFS - c->rx_buf_num);
 
-        if (icmpr_buffer_alloc (c->index, rx, c->tx_qid) < 0)
+        if (icmpr_buffer_alloc (c->index, rx, data->rx_qid) < 0)
         {
             INFO ("buffer_alloc error");
             goto error;
@@ -348,8 +354,8 @@ memif_rx_poll (void *ptr)
         DBG ("freed %d buffers. %u/%u alloc/free buffers",
                     fb, c->rx_buf_num, MAX_MEMIF_BUFS - c->rx_buf_num);
 
-        icmpr_tx_burst (c->index, c->tx_qid);
-        pthread_mutex_unlock (&memif_mutex);
+        icmpr_tx_burst (c->index, data->rx_qid);
+        pthread_mutex_unlock (&memif_mutex[data->index]);
     }
 
 error:
@@ -361,7 +367,7 @@ error:
     DBG ("freed %d buffers. %u/%u alloc/free buffers",
                 fb, c->rx_buf_num, MAX_MEMIF_BUFS - c->rx_buf_num);
     DBG ("pthread id %u exit", data->id);
-    pthread_mutex_unlock (&memif_mutex);
+    pthread_mutex_unlock (&memif_mutex[data->index]);
     pthread_exit (NULL);
 }
 
@@ -371,10 +377,15 @@ int
 on_connect (memif_conn_handle_t conn, void *private_ctx)
 {
     long index = (*(long *) private_ctx);
+    int err;
     INFO ("memif connected! index %ld", index);
     memif_connection_t *c = &memif_connection[index];
-    memif_set_rx_mode (c->conn, MEMIF_RX_MODE_POLLING, 0);
-    memif_set_rx_mode (c->conn, MEMIF_RX_MODE_POLLING, 1);
+    err = memif_set_rx_mode (c->conn, MEMIF_RX_MODE_POLLING, 0);
+    if (err != MEMIF_ERR_SUCCESS)
+        INFO ("memif_set_rx_mode: %s qid: %u", memif_strerror (err), 0);
+    err = memif_set_rx_mode (c->conn, MEMIF_RX_MODE_POLLING, 1);
+    if (err != MEMIF_ERR_SUCCESS)
+        INFO ("memif_set_rx_mode: %s qid: %u", memif_strerror (err), 1);
     c->pending_del = 0;
     thread_data[index].index = index;
     thread_data[index].rx_qid = 0;
@@ -476,8 +487,6 @@ icmpr_memif_create (long index)
     }
 
     c->index = index;
-    /* tx queue id */
-    c->tx_qid = 0;
     /* alloc memif buffers */
     c->rx_buf_num = 0;
     c->rx_bufs = (memif_buffer_t *) malloc (sizeof (memif_buffer_t) * MAX_MEMIF_BUFS);
@@ -535,7 +544,6 @@ print_help ()
     printf ("\tconn <index> - create memif (slave-mode)\n");
     printf ("\tdel  <index> - delete memif\n");
     printf ("\tshow - show connection details\n");
-    printf ("\ttx-qid <id> - set transmit queue id (TODO)\n");
     printf ("\tip-set <index> <ip-addr> - set interface ip address\n");
 }
 
@@ -660,13 +668,6 @@ user_input_handler ()
     else if (strncmp (ui, "show", 4) == 0)
     {
         print_memif_details ();
-        goto done;
-    }
-    else if (strncmp (ui, "tx-qid", 6) == 0)
-    {
-        ui = strtok (NULL, " ");
-        if (ui != NULL)
-            /* TODO: set transmit qid */
         goto done;
     }
     else if (strncmp (ui, "ip-set", 6) == 0)

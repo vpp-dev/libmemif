@@ -128,6 +128,7 @@ For detailed information on api calls and structures please refer to [libmemif.h
 - [ICMP Responder](examples/icmp_responder/main.c)
 
 #### Example app (libmemif fd event polling):
+
 - [ICMP Responder](examples/icmp_responder2/main.c)
 > Optional argument: transmit queue id.
 ```
@@ -135,6 +136,12 @@ icmpr_lep 1
 ```
 > Set transmit queue id to 1. Default is 0.
 > Application will create memif interface in slave mode and try to connect to VPP. Exit using Ctrl+C. Application will handle SIGINT signal, free allocated memory and exit with EXIT_SUCCESS.
+
+#### Example app (multi-thread queue polling)
+
+- [ICMP Responder](examples/icmp_responder3/main.c)
+
+> Connection establishment is handled by main thread, while polling for available packets is handled by threads. Each thread is handling single queue.
 
 VPP config:
 ```
