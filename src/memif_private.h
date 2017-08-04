@@ -169,6 +169,7 @@ typedef struct
     memif_connection_t *conn;
     /* used only in interrupt list */
     uint8_t qid;
+    uint8_t *filename;
 } memif_fd_list_elt_t;
 
 /*
@@ -182,11 +183,12 @@ typedef struct
     struct itimerspec arm, disarm;
     uint16_t disconn_slaves;
 
-    /* master iomplementation... */    
+    /* master implementation... */
     memif_socket_t ms;
 
     uint16_t control_list_len;
     uint16_t interrupt_list_len;
+    uint16_t listener_list_len;
     memif_fd_list_elt_t *control_list;
     memif_fd_list_elt_t *interrupt_list;
 } libmemif_main_t;

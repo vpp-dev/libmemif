@@ -69,10 +69,10 @@
 
 /* maximum tx/rx memif buffers */
 #define MAX_MEMIF_BUFS  256
-#define MAX_CONNS       2
+#define MAX_CONNS       1
 #define MAX_THREADS     4
 
-int epfd;
+int main_epfd;
 
 typedef struct
 {
@@ -81,7 +81,12 @@ typedef struct
     /* memif connection index */
     uint16_t index;
     /* id of queue to be handled by thread */
-    uint8_t rx_qid;
+    uint8_t qid;
+
+    uint16_t rx_buf_num;
+    uint16_t tx_buf_num;
+    memif_buffer_t *rx_bufs;
+    memif_buffer_t *tx_bufs;
 } memif_thread_data_t;
 
 typedef struct
@@ -89,16 +94,6 @@ typedef struct
     uint16_t index;
     /* memif conenction handle */
     memif_conn_handle_t conn;
-    /* tx buffers */
-    memif_buffer_t *tx_bufs;
-    /* allocated tx buffers counter */
-    /* number of tx buffers pointing to shared memory */
-    uint16_t tx_buf_num;
-    /* rx buffers */
-    memif_buffer_t *rx_bufs;
-    /* allcoated rx buffers counter */
-    /* number of rx buffers pointing to shared memory */
-    uint16_t rx_buf_num;
     /* interface ip address */
     uint8_t ip_addr[4];
     /* inform pthread about connection termination */
@@ -110,8 +105,12 @@ memif_connection_t memif_connection[MAX_CONNS];
 /* thread data specific for each thread */
 memif_thread_data_t thread_data[MAX_THREADS];
 pthread_t thread[MAX_THREADS];
-/* mutex specific for each connection */
-pthread_mutex_t memif_mutex[MAX_CONNS];
+
+void
+user_signal_handler (int sig)
+{
+    sig = sig;
+}
 
 static void
 print_memif_details ()
@@ -194,7 +193,7 @@ print_memif_details ()
 }
 
 int
-add_epoll_fd (int fd, uint32_t events)
+add_epoll_fd (int epfd, int fd, uint32_t events)
 {
     if (fd < 0)
     {
@@ -215,7 +214,7 @@ add_epoll_fd (int fd, uint32_t events)
 }
 
 int
-mod_epoll_fd (int fd, uint32_t events)
+mod_epoll_fd (int epfd, int fd, uint32_t events)
 {
     if (fd < 0)
     {
@@ -236,7 +235,7 @@ mod_epoll_fd (int fd, uint32_t events)
 }
 
 int
-del_epoll_fd (int fd)
+del_epoll_fd (int epfd, int fd)
 {
     if (fd < 0)
     {
@@ -254,121 +253,223 @@ del_epoll_fd (int fd)
     return 0;
 }
 
-int
-icmpr_buffer_alloc (long index, long n, uint16_t qid)
-{
-    memif_connection_t *c = &memif_connection[index];
-    int err;
-    uint16_t r;
-    /* set data pointer to shared memory and set buffer_len to shared mmeory buffer len */
-    err = memif_buffer_alloc (c->conn, qid, c->tx_bufs, n, &r);
-    if (err != MEMIF_ERR_SUCCESS)
-    {
-        INFO ("memif_buffer_alloc: %s", memif_strerror (err));
-        c->tx_buf_num += r;
-        return -1;
-    }
-    c->tx_buf_num += r;
-    DBG ("allocated %d/%ld buffers, %u free buffers", r, n, MAX_MEMIF_BUFS - c->tx_buf_num);
-    return 0;
-}
-
-int
-icmpr_tx_burst (long index, uint16_t qid)
-{
-    memif_connection_t *c = &memif_connection[index];
-    int err;
-    uint16_t r;
-    /* inform peer memif interface about data in shared memory buffers */
-    /* mark memif buffers as free */
-    err = memif_tx_burst (c->conn, qid, c->tx_bufs, c->tx_buf_num, &r);
-    if (err != MEMIF_ERR_SUCCESS)
-        INFO ("memif_tx_burst: %s", memif_strerror (err));
-    DBG ("tx: %d/%u", r, c->tx_buf_num);
-    c->tx_buf_num -= r;
-    return 0;
-}
-
 void *
 memif_rx_poll (void *ptr)
 {
     memif_thread_data_t *data = (memif_thread_data_t *) ptr;
     memif_connection_t *c = &memif_connection[data->index];
     int err;
-    uint16_t rx;
-    uint16_t fb;
+    uint16_t rx, tx, fb;
 
-    DBG ("pthread id %u start", data->id);
+    data->rx_bufs = malloc (sizeof (memif_buffer_t) * MAX_MEMIF_BUFS);
+    data->tx_bufs = malloc (sizeof (memif_buffer_t) * MAX_MEMIF_BUFS);
+    data->rx_buf_num = 0;
+    data->tx_buf_num = 0;
+
+    INFO ("pthread id %u starts in polling mode", data->id);
     
     while (1)
     {
         if (c->pending_del)
-        {
-            DBG ("pthread id %u exit", data->id);
-            pthread_exit (NULL);
-        }
-
-        /* threads are operating different rings in shared memory, so there is no need to regulate access to it */
-        /* in this example, there are memif buffers per connection, so access needs to be regulated, as all queues are using same buffers */
-        pthread_mutex_lock (&memif_mutex[data->index]);
+            goto close;
 
         /* receive data from shared memory buffers */
-        err = memif_rx_burst (c->conn, data->rx_qid, c->rx_bufs, MAX_MEMIF_BUFS, &rx);
+        err = memif_rx_burst (c->conn, data->qid, data->rx_bufs, MAX_MEMIF_BUFS, &rx);
         if (err != MEMIF_ERR_SUCCESS)
         {
             INFO ("memif_rx_burst: %s", memif_strerror (err));
-            c->rx_buf_num += rx;
+            data->rx_buf_num += rx;
             goto error;
         }
-        c->rx_buf_num += rx;
+        data->rx_buf_num += rx;
         if (rx == 0)
         {
-            pthread_mutex_unlock (&memif_mutex[data->index]);
             continue;
         }
 
         DBG ("thread id: %u", data->id);
 
         DBG ("received %d buffers. %u/%u alloc/free buffers",
-                    rx, c->rx_buf_num, MAX_MEMIF_BUFS - c->rx_buf_num);
+                    rx, data->rx_buf_num, MAX_MEMIF_BUFS - data->rx_buf_num);
 
-        if (icmpr_buffer_alloc (c->index, rx, data->rx_qid) < 0)
+        err = memif_buffer_alloc (c->conn, data->qid, data->tx_bufs, data->rx_buf_num, &tx);
+        if (err != MEMIF_ERR_SUCCESS)
         {
-            INFO ("buffer_alloc error");
+            INFO ("memif_buffer_alloc: %s", memif_strerror (err));
+            data->tx_buf_num += tx;
             goto error;
         }
+        data->tx_buf_num += tx;
+        DBG ("allocated %d/%d buffers, %u free buffers",
+                        tx, data->rx_buf_num, MAX_MEMIF_BUFS - data->tx_buf_num);
+
         int i;
         for (i = 0; i < rx; i++)
         {
-            resolve_packet ((void *) (c->rx_bufs + i)->data,
-                                (c->rx_bufs + i)->data_len, (void *) (c->tx_bufs + i)->data,
-                                &(c->tx_bufs + i)->data_len, c->ip_addr);
+            resolve_packet ((void *) (data->rx_bufs + i)->data,
+                                (data->rx_bufs + i)->data_len,
+                                (void *) (data->tx_bufs + i)->data,
+                                &(data->tx_bufs + i)->data_len, c->ip_addr);
         }
 
         /* mark memif buffers and shared memory buffers as free */
-        err = memif_buffer_free (c->conn, data->rx_qid, c->rx_bufs, rx, &fb);
+        err = memif_buffer_free (c->conn, data->qid, data->rx_bufs, rx, &fb);
         if (err != MEMIF_ERR_SUCCESS)
             INFO ("memif_buffer_free: %s", memif_strerror (err));
-        c->rx_buf_num -= fb;
+        data->rx_buf_num -= fb;
 
         DBG ("freed %d buffers. %u/%u alloc/free buffers",
-                    fb, c->rx_buf_num, MAX_MEMIF_BUFS - c->rx_buf_num);
+                    fb, data->rx_buf_num, MAX_MEMIF_BUFS - data->rx_buf_num);
 
-        icmpr_tx_burst (c->index, data->rx_qid);
-        pthread_mutex_unlock (&memif_mutex[data->index]);
+        err = memif_tx_burst (c->conn, data->qid, data->tx_bufs, data->tx_buf_num, &tx);
+        if (err != MEMIF_ERR_SUCCESS)
+        {
+            INFO ("memif_tx_burst: %s", memif_strerror (err));
+            goto error;
+        }
+        DBG ("tx: %d/%u", tx, data->tx_buf_num);
+        data->tx_buf_num -= tx;
     }
 
 error:
     INFO ("thread %u error!", data->id);
-    err = memif_buffer_free (c->conn, data->rx_qid, c->rx_bufs, rx, &fb);
+    goto close;
+
+close:
+    err = memif_buffer_free (c->conn, data->qid, data->rx_bufs, rx, &fb);
     if (err != MEMIF_ERR_SUCCESS)
         INFO ("memif_buffer_free: %s", memif_strerror (err));
-    c->rx_buf_num -= fb;
+    data->rx_buf_num -= fb;
     DBG ("freed %d buffers. %u/%u alloc/free buffers",
-                fb, c->rx_buf_num, MAX_MEMIF_BUFS - c->rx_buf_num);
-    DBG ("pthread id %u exit", data->id);
-    pthread_mutex_unlock (&memif_mutex[data->index]);
+                fb, data->rx_buf_num, MAX_MEMIF_BUFS - data->rx_buf_num);
+    free (data->rx_bufs);
+    free (data->tx_bufs);
+    INFO ("pthread id %u exit", data->id);
     pthread_exit (NULL);
+}
+
+void *
+memif_rx_interrupt (void *ptr)
+{
+    memif_thread_data_t *data = (memif_thread_data_t *) ptr;
+    memif_connection_t *c = &memif_connection[data->index];
+    int err;
+    uint16_t rx, tx, fb;
+    struct epoll_event evt, *e;
+    int en = 0;
+    uint32_t events = 0;
+    sigset_t sigset;
+
+    signal (SIGUSR1, user_signal_handler);
+
+    data->rx_bufs = malloc (sizeof (memif_buffer_t) * MAX_MEMIF_BUFS);
+    data->tx_bufs = malloc (sizeof (memif_buffer_t) * MAX_MEMIF_BUFS);
+    data->rx_buf_num = 0;
+    data->tx_buf_num = 0;
+
+    INFO ("pthread id %u starts in interrupt mode", data->id);
+    int thread_epfd = epoll_create (1);
+
+    /* get interrupt queue id */
+    int fd = -1;
+    err = memif_get_queue_efd (c->conn, data->qid, &fd);
+    if (err != MEMIF_ERR_SUCCESS)
+    {
+        INFO ("memif_get_queue_efd: %s", memif_strerror (err));
+        goto error;
+    }
+    add_epoll_fd (thread_epfd, fd, EPOLLIN);
+
+    while (1)
+    {
+        memset (&evt, 0, sizeof (evt));
+        evt.events = EPOLLIN | EPOLLOUT;
+        sigemptyset (&sigset);
+        en = epoll_pwait (thread_epfd, &evt, 1, -1, &sigset);
+        if (en < 0)
+        {
+            if (errno == EINTR)
+                goto close;
+            DBG ("epoll_pwait: %s", strerror (errno));
+            goto error;
+        }
+        else if (en > 0)
+        {
+            /* receive data from shared memory buffers */
+            err = memif_rx_burst (c->conn, data->qid, data->rx_bufs, MAX_MEMIF_BUFS, &rx);
+            if (err != MEMIF_ERR_SUCCESS)
+            {
+                INFO ("memif_rx_burst: %s", memif_strerror (err));
+                data->rx_buf_num += rx;
+                goto error;
+            }
+            data->rx_buf_num += rx;
+            if (rx == 0)
+            {
+                continue;
+            }
+
+            DBG ("thread id: %u", data->id);
+    
+            DBG ("received %d buffers. %u/%u alloc/free buffers",
+                        rx, data->rx_buf_num, MAX_MEMIF_BUFS - data->rx_buf_num);
+
+            err = memif_buffer_alloc (c->conn, data->qid, data->tx_bufs, data->rx_buf_num, &tx);
+            if (err != MEMIF_ERR_SUCCESS)
+            {
+                INFO ("memif_buffer_alloc: %s", memif_strerror (err));
+                data->tx_buf_num += tx;
+                goto error;
+            }
+            data->tx_buf_num += tx;
+            DBG ("allocated %d/%d buffers, %u free buffers",
+                            tx, data->rx_buf_num, MAX_MEMIF_BUFS - data->tx_buf_num);
+
+            int i;
+            for (i = 0; i < rx; i++)
+            {
+                resolve_packet ((void *) (data->rx_bufs + i)->data,
+                                (data->rx_bufs + i)->data_len,
+                                (void *) (data->tx_bufs + i)->data,
+                                &(data->tx_bufs + i)->data_len, c->ip_addr);
+            }
+
+            /* mark memif buffers and shared memory buffers as free */
+            err = memif_buffer_free (c->conn, data->qid, data->rx_bufs, rx, &fb);
+            if (err != MEMIF_ERR_SUCCESS)
+                INFO ("memif_buffer_free: %s", memif_strerror (err));
+            data->rx_buf_num -= fb;
+
+            DBG ("freed %d buffers. %u/%u alloc/free buffers",
+                        fb, data->rx_buf_num, MAX_MEMIF_BUFS - data->rx_buf_num);
+
+            err = memif_tx_burst (c->conn, data->qid, data->tx_bufs, data->tx_buf_num, &tx);
+            if (err != MEMIF_ERR_SUCCESS)
+            {
+                INFO ("memif_tx_burst: %s", memif_strerror (err));
+                goto error;
+            }
+            DBG ("tx: %d/%u", tx, data->tx_buf_num);
+            data->tx_buf_num -= tx;
+        }
+    }
+
+error:
+    INFO ("thread %u error!", data->id);
+    goto close;
+
+close:
+    err = memif_buffer_free (c->conn, data->qid, data->rx_bufs, rx, &fb);
+    if (err != MEMIF_ERR_SUCCESS)
+        INFO ("memif_buffer_free: %s", memif_strerror (err));
+    data->rx_buf_num -= fb;
+    DBG ("freed %d buffers. %u/%u alloc/free buffers",
+                fb, data->rx_buf_num, MAX_MEMIF_BUFS - data->rx_buf_num);
+    free (data->rx_bufs);
+    free (data->tx_bufs);
+    INFO ("pthread id %u exit", data->id);
+    pthread_exit (NULL);
+
 }
 
 /* informs user about connected status. private_ctx is used by user to identify connection
@@ -383,19 +484,20 @@ on_connect (memif_conn_handle_t conn, void *private_ctx)
     err = memif_set_rx_mode (c->conn, MEMIF_RX_MODE_POLLING, 0);
     if (err != MEMIF_ERR_SUCCESS)
         INFO ("memif_set_rx_mode: %s qid: %u", memif_strerror (err), 0);
-    err = memif_set_rx_mode (c->conn, MEMIF_RX_MODE_POLLING, 1);
+    err = memif_set_rx_mode (c->conn, MEMIF_RX_MODE_INTERRUPT, 1);
     if (err != MEMIF_ERR_SUCCESS)
         INFO ("memif_set_rx_mode: %s qid: %u", memif_strerror (err), 1);
     c->pending_del = 0;
     thread_data[index].index = index;
-    thread_data[index].rx_qid = 0;
+    thread_data[index].qid = 0;
     thread_data[index].id = 0;
     pthread_create (&thread[0], NULL, memif_rx_poll, (void *) &thread_data[index]);
 
     thread_data[index + 1].index = index;
-    thread_data[index + 1].rx_qid = 1;
+    thread_data[index + 1].qid = 1;
     thread_data[index + 1].id = 1;
-    pthread_create (&thread[1], NULL, memif_rx_poll, (void *) &thread_data[index + 1]);
+    pthread_create (&thread[1], NULL, memif_rx_interrupt, (void *) &thread_data[index + 1]);
+
     return 0;
 }
 
@@ -404,11 +506,15 @@ on_connect (memif_conn_handle_t conn, void *private_ctx)
 int
 on_disconnect (memif_conn_handle_t conn, void *private_ctx)
 {
-    INFO ("memif disconnected!");
-    memif_connection_t *c = &memif_connection[(*(long *) private_ctx)];
-    c->pending_del = 1;
     void *ptr;
+    memif_connection_t *c = &memif_connection[(*(long *) private_ctx)];
+
+    INFO ("memif disconnected!");
+    /* inform thread in polling mode about memif disconenction */
+    c->pending_del = 1;
     pthread_join (thread[0], &ptr);
+    /* send custom sugnal to interrupt thread */
+    pthread_kill (thread[1], SIGUSR1);
     pthread_join (thread[1], &ptr);
     return 0;
 }
@@ -420,7 +526,7 @@ control_fd_update (int fd, uint8_t events)
 {
     /* convert memif event definitions to epoll events */
     if (events & MEMIF_FD_EVENT_DEL)
-        return del_epoll_fd (fd);
+        return del_epoll_fd (main_epfd, fd);
 
     uint32_t evt = 0;
     if (events & MEMIF_FD_EVENT_READ)
@@ -429,17 +535,9 @@ control_fd_update (int fd, uint8_t events)
         evt |= EPOLLOUT;
 
     if (events & MEMIF_FD_EVENT_MOD)
-        return mod_epoll_fd (fd, evt);
+        return mod_epoll_fd (main_epfd, fd, evt);
 
-    return add_epoll_fd (fd, evt);
-}
-
-/* called when event is polled on interrupt file descriptor.
-    there are packets in shared memory ready to be received */
-int
-on_interrupt (memif_conn_handle_t conn, void *private_ctx, uint16_t qid)
-{
-    return 0;
+    return add_epoll_fd (main_epfd, fd, evt);
 }
 
 int
@@ -479,7 +577,7 @@ icmpr_memif_create (long index)
     long *ctx = malloc (sizeof (long));
     *ctx = index;
     int err = memif_create (&c->conn,
-                    &args, on_connect, on_disconnect, on_interrupt, ctx);
+                    &args, on_connect, on_disconnect, NULL, ctx);
     if (err != MEMIF_ERR_SUCCESS)
     {
         INFO ("memif_create: %s", memif_strerror (err));
@@ -487,11 +585,6 @@ icmpr_memif_create (long index)
     }
 
     c->index = index;
-    /* alloc memif buffers */
-    c->rx_buf_num = 0;
-    c->rx_bufs = (memif_buffer_t *) malloc (sizeof (memif_buffer_t) * MAX_MEMIF_BUFS);
-    c->tx_buf_num = 0;
-    c->tx_bufs = (memif_buffer_t *) malloc (sizeof (memif_buffer_t) * MAX_MEMIF_BUFS);
 
     c->ip_addr[0] = 192;
     c->ip_addr[1] = 168;
@@ -556,10 +649,6 @@ icmpr_free ()
     {
         memif_connection_t *c = &memif_connection[i];
         icmpr_memif_delete (i);
-        free (c->tx_bufs);
-        c->tx_bufs = NULL;
-        free (c->rx_bufs);
-        c->rx_bufs = NULL;
     }
 
     pthread_exit (NULL);
@@ -702,7 +791,7 @@ poll_event (int timeout)
     evt.events = EPOLLIN | EPOLLOUT;
     sigset_t sigset;
     sigemptyset (&sigset);
-    en = epoll_pwait (epfd, &evt, 1, timeout, &sigset);
+    en = epoll_pwait (main_epfd, &evt, 1, timeout, &sigset);
     if (en < 0)
     {
         DBG ("epoll_pwait: %s", strerror (errno));
@@ -749,8 +838,8 @@ poll_event (int timeout)
 
 int main ()
 {
-    epfd = epoll_create (1);
-    add_epoll_fd (0, EPOLLIN);
+    main_epfd = epoll_create (1);
+    add_epoll_fd (main_epfd, 0, EPOLLIN);
 
     /* initialize memory interface */
     int err;

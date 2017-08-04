@@ -14,8 +14,8 @@ Shared memory packet interface (memif) provides high performance packet transmit
 - [x] File descriptor event polling in libmemif (optional)
   - [x] Simplify file descriptor event polling (one handler for control and interrupt channel)
 - [x] Multiple connections
-- [x] Multipe queues
-  - [ ] Multithread support
+- [x] Multiple queues
+  - [ ] Multi-thread support
 - [ ] Master mode
 	- [ ] Multiple regions
 - [ ] Performance testing
@@ -24,7 +24,7 @@ Shared memory packet interface (memif) provides high performance packet transmit
 
 ## Getting started
 
-#### Instalation
+#### Installation
 
 Clone repository to your local machine. From root directory execute:
 
@@ -47,7 +47,7 @@ Verify installation:
 ```
 # ./.libs/icmp_responder
 ```
-> Make sure to run the binary file from ./.libs. File ./icmp\_responder in libmemif root directory is script that links the library, so it only verifies succesfull build. Default install path is /usr/lib.
+> Make sure to run the binary file from ./.libs. File ./icmp\_responder in libmemif root directory is script that links the library, so it only verifies successful build. Default install path is /usr/lib.
 Use _help_ command to display build information and commands:
 ```
 LIBMEMIF EXAMPLE APP: ICMP_Responder (debug)
@@ -64,7 +64,7 @@ commands:
 
 #### Unit tests
 
-Unit tests use [Check](https://libcheck.github.io/check/index.html) framework. This framework must be instaled in order to build *unit\_test* binary.
+Unit tests use [Check](https://libcheck.github.io/check/index.html) framework. This framework must be installed in order to build *unit\_test* binary.
 Ubuntu/Debian:
 ```
 sudo apt-get install check
@@ -79,16 +79,16 @@ For detailed information on api calls and structures please refer to [libmemif.h
    - Declare callback function handling file descriptor event polling. memif\_control\_fd\_update\_t
    - Call memif initialization function. memif\_init
    
-> If event occures on any file descriptor returned by this callback, call memif\_control\_fd\_handler function. 
+> If event occurres on any file descriptor returned by this callback, call memif\_control\_fd\_handler function. 
 > If callback function parameter for memif\_init function is set to NULL, libmemif will handle file descriptor event polling.
-  Api call memif\_poll\_event will call epoll\_pwait wit user defined timeout to poll event on file descriptors opend by libmemif.
+  Api call memif\_poll\_event will call epoll\_pwait wit user defined timeout to poll event on file descriptors opened by libmemif.
     
-> Mmeif initialization function will initialize internal structures and create timer file descriptor, which will be used for sending periodic connection requests. Timer is disarmed if no memif interface is created.
+> Memif initialization function will initialize internal structures and create timer file descriptor, which will be used for sending periodic connection requests. Timer is disarmed if no memif interface is created.
  
 2. Creating interface
-   - Declare memif conenction handle. memif\_conn\_handle\_t
+   - Declare memif connction handle. memif\_conn\_handle\_t
    - Specify connection arguments. memif\_conn\_args\_t
-   - Declare callback functions called on connected/disconencted status changed. memif\_connection\_update\_t
+   - Declare callback functions called on connected/disconnected status changed. memif\_connection\_update\_t
    - Call memif interface create function. memif\_create
 > Arms timer file descriptor.
 
@@ -118,7 +118,7 @@ For detailed information on api calls and structures please refer to [libmemif.h
     - Memif details
       - Api call memif\_get\_details will return details about connection.
     - Memif error messages
-      - Every api call returns error code (integer value) maped to error string.
+      - Every api call returns error code (integer value) mapped to error string.
       - Call memif\_strerror will return error message assigned to specific error code.
         - Not all syscall errors are translated to memif error codes. If error code 1 (MEMIF\_ERR\_SYSCALL) is returned then libmemif needs to be compiled with -DMEMIF_DBG flag to print error message. Use _make -B_ to rebuild libmemif in debug mode.
     
@@ -141,7 +141,7 @@ icmpr_lep 1
 
 - [ICMP Responder](examples/icmp_responder3/main.c)
 
-> Connection establishment is handled by main thread, while polling for available packets is handled by threads. Each thread is handling single queue.
+> Simple example of libmemif multi-thread usage. Connection establishment is handled by main thread. There are two rx queues in this example. One in polling mode and second in interrupt mode.
 
 VPP config:
 ```
@@ -150,7 +150,7 @@ VPP config:
 # set int ip address memif0 192.168.1.1/24
 # ping 192.168.1.2
 ```
-For multipe rings (queues) support run VPP with worker threads:
+For multiple rings (queues) support run VPP with worker threads:
 example startup.conf:
 ```
 unix {

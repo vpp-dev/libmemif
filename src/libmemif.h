@@ -199,10 +199,30 @@ typedef enum
     MEMIF_RX_MODE_POLLING
 } memif_rx_mode_t;
 
-/** \brief Memif set rx mode
-    @param rx_mode - receive mode. 0 = interrupt, 1 = polling
+/** \biref Memif get queue event file descriptor
+    @param conn - memif connection handle
+    @param qid - queue id
+    @param fd - returns event file descriptor
+
+    return
+        MEMIF_ERR_SUCCESS           - no error
+        MEMIF_ERR_NOCONN            - connection handle points to NULL
+        MEMIF_ERR_QID               - invalid queue id
 */
-int memif_set_rx_mode (memif_conn_handle_t c, memif_rx_mode_t rx_mode, uint16_t qid);
+
+int memif_get_queue_efd (memif_conn_handle_t conn, uint16_t qid, int *fd);
+
+/** \brief Memif set rx mode
+    @param conn - memif connection handle
+    @param rx_mode - receive mode
+    @param qid - queue id
+
+    return
+        MEMIF_ERR_SUCCESS           - no error
+        MEMIF_ERR_NOCONN            - connection handle points to NULL
+        MEMIF_ERR_QID               - invalid queue id
+*/
+int memif_set_rx_mode (memif_conn_handle_t conn, memif_rx_mode_t rx_mode, uint16_t qid);
 
 /** \brief Memif strerror
     @param - err_code - error code
@@ -360,6 +380,7 @@ int memif_buffer_alloc (memif_conn_handle_t conn, uint16_t qid,
         MEMIF_ERR_SUCCESS           - no error
         MEMIF_ERR_NOCONN            - handle points to NULL
         MEMIF_ERR_DISCONNECTED      - not conencted
+        MEMIF_ERR_QID               - invalid queue id
 */
 int memif_buffer_free (memif_conn_handle_t conn, uint16_t qid,
                        memif_buffer_t *bufs, uint16_t count, uint16_t *count_out);
@@ -375,6 +396,7 @@ int memif_buffer_free (memif_conn_handle_t conn, uint16_t qid,
         MEMIF_ERR_SUCCESS           - no error
         MEMIF_ERR_NOCONN            - handle points to NULL
         MEMIF_ERR_DISCONNECTED      - not conencted
+        MEMIF_ERR_QID               - invalid queue id
 */
 int memif_tx_burst (memif_conn_handle_t conn, uint16_t qid,
                     memif_buffer_t *bufs, uint16_t count, uint16_t *tx);
@@ -391,6 +413,7 @@ int memif_tx_burst (memif_conn_handle_t conn, uint16_t qid,
         MEMIF_ERR_NOCONN            - handle points to NULL
         MEMIF_ERR_DISCONNECTED      - not conencted
         MEMIF_ERR_NOBUF             - not enough buffers provided
+        MEMIF_ERR_QID               - invalid queue id
 */
 int memif_rx_burst (memif_conn_handle_t conn, uint16_t qid,
                     memif_buffer_t *bufs, uint16_t count, uint16_t *rx);
@@ -404,6 +427,7 @@ int memif_rx_burst (memif_conn_handle_t conn, uint16_t qid,
 
     return
         MEMIF_ERR_SUCCESS           - no error
+        MEMIF_ERR_QID               - invalid queue id
 */
 int memif_poll_event (int timeout);
 

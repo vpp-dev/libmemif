@@ -538,8 +538,11 @@ memif_msg_receive_connect (memif_connection_t *c, memif_msg_t *msg)
     strncpy ((char *) c->remote_if_name, (char *) cm->if_name, strlen ((char *) cm->if_name));
 
     int i;
-    for (i = 0; i < c->args.num_m2s_rings; i++)
-        lm->control_fd_update (c->rx_queues[i].int_fd, MEMIF_FD_EVENT_READ);
+    if (c->on_interrupt != NULL)
+    {
+        for (i = 0; i < c->args.num_m2s_rings; i++)
+            lm->control_fd_update (c->rx_queues[i].int_fd, MEMIF_FD_EVENT_READ);
+    }
 
     c->on_connect ((void *) c, c->private_ctx);
 
@@ -561,8 +564,11 @@ memif_msg_receive_connected (memif_connection_t *c, memif_msg_t *msg)
     strncpy ((char *) c->remote_if_name, (char *) cm->if_name, strlen ((char *) cm->if_name));
 
     int i;
-    for (i = 0; i < c->args.num_s2m_rings; i++)
-        lm->control_fd_update (c->rx_queues[i].int_fd, MEMIF_FD_EVENT_READ);
+    if (c->on_interrupt != NULL)
+    {
+        for (i = 0; i < c->args.num_s2m_rings; i++)
+            lm->control_fd_update (c->rx_queues[i].int_fd, MEMIF_FD_EVENT_READ);
+    }
 
     c->on_connect ((void *) c, c->private_ctx);
 

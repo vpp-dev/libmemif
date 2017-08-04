@@ -457,6 +457,9 @@ memif_set_rx_mode (memif_conn_handle_t c, memif_rx_mode_t rx_mode, uint16_t qid)
     memif_connection_t *conn = (memif_connection_t *) c;
     if (conn == NULL)
         return MEMIF_ERR_NOCONN;
+    uint8_t num = (conn->args.is_master) ? conn->args.num_s2m_rings : conn->args.num_m2s_rings;
+    if (qid >= num)
+        return MEMIF_ERR_QID;
 
     conn->rx_queues[qid].ring->flags = rx_mode;
     DBG ("rx_mode flag: %u", conn->rx_queues[qid].ring->flags);
@@ -559,6 +562,7 @@ memif_create (memif_conn_handle_t *c, memif_conn_args_t *args,
         strncpy ((char *) conn->args.secret, (char *) args->secret, l);
     }
 
+/* SLAVE */
     if (lm->disconn_slaves == 0)
     {
         if (timerfd_settime (lm->timerfd, 0, &lm->arm, NULL) < 0)
@@ -578,6 +582,10 @@ memif_create (memif_conn_handle_t *c, memif_conn_args_t *args,
         err = MEMIF_ERR_NOMEM;
         goto error;
     }
+
+
+
+
 
     conn->index = index;
 
@@ -638,7 +646,7 @@ memif_control_fd_handler (int fd, uint8_t events)
 
                     lm->control_list[conn->index].fd = conn->fd;
 
-                        lm->control_fd_update (
+                    lm->control_fd_update (
                                 sockfd, MEMIF_FD_EVENT_READ | MEMIF_FD_EVENT_WRITE);
 
                     lm->disconn_slaves--;
@@ -664,7 +672,8 @@ memif_control_fd_handler (int fd, uint8_t events)
         get_fd_list_elt (&e, lm->interrupt_list, lm->interrupt_list_len, fd);
         if (e != NULL)
         {
-            e->conn->on_interrupt ((void *) e->conn, e->conn->private_ctx, e->qid);
+            if (e->conn->on_interrupt != NULL)
+                e->conn->on_interrupt ((void *) e->conn, e->conn->private_ctx, e->qid);
             return MEMIF_ERR_SUCCESS;
         }
 
@@ -724,7 +733,8 @@ memif_poll_event (int timeout)
         get_fd_list_elt (&elt, lm->interrupt_list, lm->interrupt_list_len, evt.data.fd);
         if (elt != NULL)
         {
-            elt->conn->on_interrupt ((void *) elt->conn, elt->conn->private_ctx, elt->qid);
+            if (elt->conn->on_interrupt != NULL)
+                elt->conn->on_interrupt ((void *) elt->conn, elt->conn->private_ctx, elt->qid);
             return 0;
         }
         get_fd_list_elt (&elt, lm->control_list, lm->control_list_len, evt.data.fd);
@@ -817,7 +827,8 @@ memif_disconnect_internal (memif_connection_t *c, uint8_t is_del)
             {
                 if (mq->int_fd > 0)
                 {
-                    lm->control_fd_update (mq->int_fd, MEMIF_FD_EVENT_DEL);
+                    if (c->on_interrupt != NULL)
+                        lm->control_fd_update (mq->int_fd, MEMIF_FD_EVENT_DEL);
                     close (mq->int_fd);
                 }
                 get_fd_list_elt (&e, lm->interrupt_list, lm->interrupt_list_len, mq->int_fd);
@@ -853,8 +864,8 @@ memif_disconnect_internal (memif_connection_t *c, uint8_t is_del)
             DBG_UNIX ("timerfd_settime: arm"); 
         }
     }
-    lm->disconn_slaves++;
 
+    lm->disconn_slaves++;
 
     return err;
 }
@@ -1188,6 +1199,7 @@ memif_buffer_free (memif_conn_handle_t conn, uint16_t qid,
 
             count -= 2;
             *count_out += 2;
+            mq->alloc_bufs -= 2;
         }
         b0 = (bufs + *count_out);
         tail = (b0->desc_index + 1) & mask;
@@ -1195,6 +1207,7 @@ memif_buffer_free (memif_conn_handle_t conn, uint16_t qid,
 
         count--;
         *count_out += 1;
+        mq->alloc_bufs--;
     }
     MEMIF_MEORY_BARRIER ();
     ring->tail = tail;
@@ -1297,12 +1310,11 @@ memif_rx_burst (memif_conn_handle_t conn, uint16_t qid,
     uint16_t mask = (1 << mq->log2_ring_size) - 1;
     memif_buffer_t *b0, *b1;
     *rx = 0;
-
+    
     uint64_t b;
     ssize_t r = read (mq->int_fd, &b, sizeof (b));
     if ((r == -1) && (errno != EAGAIN))
         return memif_syscall_error_handler (errno);
-    
 
     if (head == mq->last_head)
         return 0;
@@ -1452,4 +1464,22 @@ memif_get_details (memif_conn_handle_t conn, memif_details_t *md,
     md->link_up_down = (c->fd > 0) ? 1 : 0;
 
     return err; /* 0 */
+}
+
+int
+memif_get_queue_efd (memif_conn_handle_t conn, uint16_t qid, int *efd)
+{
+    memif_connection_t *c = (memif_connection_t *) conn;
+    *efd = -1;
+    if (c == NULL)
+        return MEMIF_ERR_NOCONN;
+    if (c->fd < 0)
+        return MEMIF_ERR_DISCONNECTED;
+    uint8_t num = (c->args.is_master) ? c->args.num_s2m_rings : c->args.num_m2s_rings;
+    if (qid >= num)
+        return MEMIF_ERR_QID;
+
+    *efd = c->rx_queues[qid].int_fd;
+
+    return MEMIF_ERR_SUCCESS;    
 }
