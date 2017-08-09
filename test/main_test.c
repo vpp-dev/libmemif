@@ -14,6 +14,9 @@
  * limitations under the License.
  *------------------------------------------------------------------
  */
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <main_test.h>
 
@@ -157,6 +160,66 @@ START_TEST (test_create)
 }
 END_TEST
 
+START_TEST (test_create_master)
+{
+    int err, rv;
+    memif_conn_handle_t conn = NULL;
+    memif_conn_args_t args;
+    memset (&args, 0, sizeof (args));
+    args.is_master = 1;
+
+    libmemif_main_t *lm = &libmemif_main;
+
+    if ((err = memif_init (control_fd_update)) != MEMIF_ERR_SUCCESS)
+        ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
+
+    strncpy ((char *) args.interface_name, TEST_IF_NAME, strlen (TEST_IF_NAME));
+    strncpy ((char *) args.instance_name, TEST_APP_NAME, strlen (TEST_APP_NAME));
+
+    if ((err = memif_create (&conn, &args, on_connect,
+                    on_disconnect, on_interrupt, NULL)) != MEMIF_ERR_SUCCESS)
+        ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
+
+    memif_connection_t *c = (memif_connection_t *) conn;
+
+    ck_assert_ptr_ne (c, NULL);
+
+    ck_assert_uint_eq (c->args.interface_id, args.interface_id);
+    ck_assert_uint_eq (c->args.is_master, args.is_master);
+    ck_assert_uint_eq (c->args.mode, args.mode);
+
+    ck_assert_uint_eq (c->args.num_s2m_rings, MEMIF_DEFAULT_TX_QUEUES);
+    ck_assert_uint_eq (c->args.num_m2s_rings, MEMIF_DEFAULT_RX_QUEUES);
+    ck_assert_uint_eq (c->args.buffer_size, MEMIF_DEFAULT_BUFFER_SIZE);
+    ck_assert_uint_eq (c->args.log2_ring_size, MEMIF_DEFAULT_LOG2_RING_SIZE);
+
+    ck_assert_ptr_eq (c->msg_queue, NULL);
+    ck_assert_ptr_eq (c->regions, NULL);
+    ck_assert_ptr_eq (c->tx_queues, NULL);
+    ck_assert_ptr_eq (c->rx_queues, NULL);
+
+    ck_assert_int_eq (c->fd, -1);
+
+    ck_assert_ptr_ne (c->on_connect, NULL);
+    ck_assert_ptr_ne (c->on_disconnect, NULL);
+    ck_assert_ptr_ne (c->on_interrupt, NULL);
+
+    ck_assert_str_eq (c->args.interface_name, args.interface_name);
+    ck_assert_str_eq (c->args.instance_name, args.instance_name);
+    ck_assert_str_eq (c->args.socket_filename, SOCKET_FILENAME);
+
+    struct stat file_stat;
+
+    rv = stat (SOCKET_FILENAME, &file_stat);
+    ck_assert_int_eq (rv, 0);
+
+    ck_assert (S_ISSOCK (file_stat.st_mode));
+
+    memif_delete (&conn);
+    ck_assert_ptr_eq (conn, NULL);
+}
+END_TEST
+
 START_TEST (test_create_mult)
 {
     int err;
@@ -277,8 +340,8 @@ START_TEST (test_control_fd_handler)
    
     register_fd_ready_fn (c, read_fn, write_fn, error_fn);
     c->fd = 69;
-    lm->control_list[0].fd = c->fd;
-    lm->control_list[0].conn = c;
+    lm->control_list[0].key = c->fd;
+    lm->control_list[0].data_struct = c;
  
     if ((err = memif_control_fd_handler (
                 c->fd, MEMIF_FD_EVENT_READ)) != MEMIF_ERR_SUCCESS)
@@ -873,6 +936,7 @@ main_suite ()
     tcase_add_test (tc_api, test_init);
     tcase_add_test (tc_api, test_init_epoll);
     tcase_add_test (tc_api, test_create);
+    tcase_add_test (tc_api, test_create_master);
     tcase_add_test (tc_api, test_create_mult);
     tcase_add_test (tc_api, test_control_fd_handler);
     tcase_add_test (tc_api, test_buffer_alloc);

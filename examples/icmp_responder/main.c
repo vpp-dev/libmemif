@@ -77,8 +77,6 @@ typedef struct
     uint16_t index;
     /* memif conenction handle */
     memif_conn_handle_t conn;
-    /* transmit queue id */
-    uint16_t tx_qid;
     /* tx buffers */
     memif_buffer_t *tx_bufs;
     /* allocated tx buffers counter */
@@ -393,7 +391,7 @@ icmpr_memif_create (long index)
     memif_conn_args_t args;
     int fd = -1;
     memset (&args, 0, sizeof (args));
-    args.is_master = 0;
+    args.is_master = 1;
     args.log2_ring_size = 10;
     args.buffer_size = 2048;
     args.num_s2m_rings = 2;
@@ -419,8 +417,6 @@ icmpr_memif_create (long index)
     }
 
     c->index = index;
-    /* tx queue id */
-    c->tx_qid = 0;
     /* alloc memif buffers */
     c->rx_buf_num = 0;
     c->rx_bufs = (memif_buffer_t *) malloc (sizeof (memif_buffer_t) * MAX_MEMIF_BUFS);
@@ -479,6 +475,7 @@ print_help ()
     printf ("\tdel  <index> - delete memif\n");
     printf ("\tshow - show connection details\n");
     printf ("\tip-set <index> <ip-addr> - set interface ip address\n");
+    printf ("\trx-mode <index> <qid> <polling|interrupt> - set queue rx mode\n");
 }
 int
 icmpr_free ()

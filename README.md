@@ -15,8 +15,8 @@ Shared memory packet interface (memif) provides high performance packet transmit
   - [x] Simplify file descriptor event polling (one handler for control and interrupt channel)
 - [x] Multiple connections
 - [x] Multiple queues
-  - [ ] Multi-thread support
-- [ ] Master mode
+  - [x] Multi-thread support
+- [x] Master mode
 	- [ ] Multiple regions
 - [ ] Performance testing
 - [ ] Documentation

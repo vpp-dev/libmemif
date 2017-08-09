@@ -260,7 +260,7 @@ START_TEST (test_send_hello)
     memset (conn.args.instance_name, 0, sizeof (conn.args.instance_name));
     strncpy ((char *) conn.args.instance_name, TEST_APP_NAME, strlen (TEST_APP_NAME));
 
-    if ((err = memif_msg_send_hello (&conn)) != MEMIF_ERR_SUCCESS)
+    if ((err = memif_msg_send_hello (conn.fd)) != MEMIF_ERR_SUCCESS)
         ck_assert_msg (err == MEMIF_ERR_BAD_FD, 
                 "err code: %u, err msg: %s", err, memif_strerror (err));
 }
@@ -274,7 +274,7 @@ START_TEST (test_send_disconnect)
 
     /* only possible fail if memif_msg_send fails...  */
     /* obsolete without socket */
-    if ((err = memif_msg_send_disconnect (&conn, "unit_test_dc", 0)) != MEMIF_ERR_SUCCESS)
+    if ((err = memif_msg_send_disconnect (conn.fd, "unit_test_dc", 0)) != MEMIF_ERR_SUCCESS)
         ck_assert_msg (err == MEMIF_ERR_BAD_FD, 
                 "err code: %u, err msg: %s", err, memif_strerror (err));
 }
@@ -343,41 +343,52 @@ START_TEST (test_recv_init)
     strncpy ((char *) i->name, TEST_IF_NAME, strlen (TEST_IF_NAME));
     strncpy ((char *) i->secret, TEST_SECRET, strlen (TEST_SECRET));
 
-    if ((err = memif_msg_receive_init (&conn, &msg)) != MEMIF_ERR_SUCCESS)
+    memif_socket_t ms;
+    ms.interface_list_len = 1;
+    ms.interface_list = malloc (sizeof (memif_list_elt_t));
+    memif_list_elt_t elt;
+    elt.key = 69;
+    elt.data_struct = &conn;
+    add_list_elt (&elt, &ms.interface_list, &ms.interface_list_len);
+
+    if ((err = memif_init (control_fd_update)) != MEMIF_ERR_SUCCESS)
+        ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
+
+    if ((err = memif_msg_receive_init (&ms, -1, &msg)) != MEMIF_ERR_SUCCESS)
         ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
 
     i->version = 9;
-    if ((err = memif_msg_receive_init (&conn, &msg)) != MEMIF_ERR_SUCCESS)
+    if ((err = memif_msg_receive_init (&ms, -1, &msg)) != MEMIF_ERR_SUCCESS)
         ck_assert_msg (err == MEMIF_ERR_PROTO,
                 "err code: %u, err msg: %s", err, memif_strerror (err));
     i->version = MEMIF_VERSION;
 
     i->id = 78;
-    if ((err = memif_msg_receive_init (&conn, &msg)) != MEMIF_ERR_SUCCESS)
+    if ((err = memif_msg_receive_init (&ms, -1, &msg)) != MEMIF_ERR_SUCCESS)
         ck_assert_msg (err == MEMIF_ERR_ID,
                 "err code: %u, err msg: %s", err, memif_strerror (err));
     i->id = 69;
 
     i->mode = 1;
-    if ((err = memif_msg_receive_init (&conn, &msg)) != MEMIF_ERR_SUCCESS)
+    if ((err = memif_msg_receive_init (&ms, -1, &msg)) != MEMIF_ERR_SUCCESS)
         ck_assert_msg (err == MEMIF_ERR_MODE,
                 "err code: %u, err msg: %s", err, memif_strerror (err));
     i->mode = 0;
 
     i->secret[0] = '\0';
-    if ((err = memif_msg_receive_init (&conn, &msg)) != MEMIF_ERR_SUCCESS)
+    if ((err = memif_msg_receive_init (&ms, -1, &msg)) != MEMIF_ERR_SUCCESS)
         ck_assert_msg (err == MEMIF_ERR_SECRET,
                 "err code: %u, err msg: %s", err, memif_strerror (err));
     strncpy ((char *) i->secret, TEST_SECRET, strlen (TEST_SECRET));
 
     conn.args.is_master = 0;
-    if ((err = memif_msg_receive_init (&conn, &msg)) != MEMIF_ERR_SUCCESS)
+    if ((err = memif_msg_receive_init (&ms, -1, &msg)) != MEMIF_ERR_SUCCESS)
         ck_assert_msg (err == MEMIF_ERR_ACCSLAVE,
                 "err code: %u, err msg: %s", err, memif_strerror (err));
     conn.args.is_master = 1;
 
     conn.fd = 5;
-    if ((err = memif_msg_receive_init (&conn, &msg)) != MEMIF_ERR_SUCCESS)
+    if ((err = memif_msg_receive_init (&ms, -1, &msg)) != MEMIF_ERR_SUCCESS)
         ck_assert_msg ((err == MEMIF_ERR_ALRCONN) || (err == MEMIF_ERR_BAD_FD),
                 "err code: %u, err msg: %s", err, memif_strerror (err));
 }
@@ -412,6 +423,10 @@ START_TEST (test_recv_add_ring)
     memif_connection_t conn;
     int fd = 5;
     memif_msg_t msg;
+    conn.args.num_s2m_rings = 2;
+    conn.args.num_m2s_rings = 2;
+    conn.rx_queues = NULL;
+    conn.tx_queues = NULL;
 
     msg.type = MEMIF_MSG_TYPE_ADD_RING;
     memif_msg_add_ring_t *ar = &msg.add_ring;
