@@ -118,7 +118,7 @@ print_memif_details ()
     memif_details_t md;
     ssize_t buflen;
     char *buf;
-    int err, i;
+    int err, i, e;
     printf ("MEMIF DETAILS\n");
     printf ("==============================\n");
     for (i = 0; i < MAX_CONNS; i++)
@@ -133,15 +133,15 @@ print_memif_details ()
 
         err = memif_get_details (c->conn, &md, buf, buflen);
         if (err != MEMIF_ERR_SUCCESS)
-        {
+        {   
             if (err == MEMIF_ERR_NOCONN)
-            {
+            {   
                 printf ("\tno connection\n");
                 free (buf);
                 continue;
             }
             else
-            {
+            {   
                 INFO ("%s", memif_strerror (err));
                 free (buf);
                 continue;
@@ -163,7 +163,7 @@ print_memif_details ()
             printf ("master\n");
         printf ("\tmode: ");
         switch (md.mode)
-        {
+        {   
             case 0:
                 printf ("ethernet\n");
                 break;
@@ -178,10 +178,20 @@ print_memif_details ()
                 break;
         }
         printf ("\tsocket filename: %s\n",(char *) md.socket_filename);
-        printf ("\tring_size: %u\n", md.ring_size);
-        printf ("\tbuffer_size: %u\n", md.buffer_size);
-        printf ("\trx queues: %u\n", md.rx_queues);
-        printf ("\ttx queues: %u\n", md.tx_queues);
+        printf ("\trx queues:\n");
+        for (e = 0; e < md.rx_queues_num; e++)
+        {
+            printf ("\tqueue id: %u\n", md.rx_queues[e].qid);
+            printf ("\t\tring size: %u\n", md.rx_queues[e].ring_size);
+            printf ("\t\tbuffer size: %u\n", md.rx_queues[e].buffer_size);
+        }
+        printf ("\ttx queues:\n");
+        for (e = 0; e < md.tx_queues_num; e++)
+        {
+            printf ("\tqueue id: %u\n", md.tx_queues[e].qid);
+            printf ("\t\tring size: %u\n", md.tx_queues[e].ring_size);
+            printf ("\t\tbuffer size: %u\n", md.tx_queues[e].buffer_size);
+        }
         printf ("\tlink: ");
         if (md.link_up_down)
             printf ("up\n");
@@ -846,7 +856,7 @@ int main ()
     /* if valid callback is passed as argument, fd event polling will be done by user
         all file descriptors and events will be passed to user in this callback */
     /* if callback is set to NULL libmemif will handle fd event polling */
-    err = memif_init (control_fd_update);
+    err = memif_init (control_fd_update, APP_NAME);
     if (err != MEMIF_ERR_SUCCESS)
         INFO ("memif_init: %s", memif_strerror (err));
 

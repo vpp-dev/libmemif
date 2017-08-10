@@ -88,9 +88,10 @@ For detailed information on api calls and structures please refer to [libmemif.h
 2. Creating interface
    - Declare memif connction handle. memif\_conn\_handle\_t
    - Specify connection arguments. memif\_conn\_args\_t
-   - Declare callback functions called on connected/disconnected status changed. memif\_connection\_update\_t
+   - Declare callback functions called on connected/disconnected/interrupted status changed. memif\_connection\_update\_t
    - Call memif interface create function. memif\_create
-> Arms timer file descriptor.
+> If connection is in slave mode, arms timer file descriptor.
+> If on interrupt callback is set to NULL, user will not be notified about interrupt. Use memif\_get\_queue\_efd call to get interrupt file descrip[tor for specific queue.
 
 3. Connection establishment
     - User application will poll events on all file descriptors returned in memif\_control\_fd\_update\_t callback..
@@ -121,7 +122,6 @@ For detailed information on api calls and structures please refer to [libmemif.h
       - Every api call returns error code (integer value) mapped to error string.
       - Call memif\_strerror will return error message assigned to specific error code.
         - Not all syscall errors are translated to memif error codes. If error code 1 (MEMIF\_ERR\_SYSCALL) is returned then libmemif needs to be compiled with -DMEMIF_DBG flag to print error message. Use _make -B_ to rebuild libmemif in debug mode.
-    
 
 #### Example app:
 
@@ -171,3 +171,4 @@ VPP config:
 # ping 192.168.1.2
 ```
 > Example applications use VPP default socket file for memif: /run/vpp/memif.sock
+> For master mode, socket directory must exist prior to memif\_create call.

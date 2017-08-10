@@ -115,10 +115,19 @@ typedef struct memif_connection memif_connection_t;
 /* functions called by memif_control_fd_handler */
 typedef int (memif_fn) (memif_connection_t *conn);
 
+typedef struct
+{
+    uint8_t num_s2m_rings;
+    uint8_t num_m2s_rings;
+    uint16_t buffer_size;
+    memif_log2_ring_size_t log2_ring_size;
+} memif_conn_run_args_t;
+
 typedef struct memif_connection
 {
     uint16_t index;
     memif_conn_args_t args;
+    memif_conn_run_args_t run_args;
 
     int fd;
     int listener_fd;
@@ -176,6 +185,7 @@ typedef struct
     int timerfd;
     struct itimerspec arm, disarm;
     uint16_t disconn_slaves;
+    uint8_t *app_name;
 
     /* master implementation... */
     memif_socket_t ms;

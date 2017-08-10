@@ -93,13 +93,14 @@ typedef struct
 
 memif_connection_t memif_connection[MAX_CONNS];
 
+/* print details for all memif connections */
 static void
 print_memif_details ()
 {
     memif_details_t md;
     ssize_t buflen;
     char *buf;
-    int err, i;
+    int err, i, e;
     printf ("MEMIF DETAILS\n");
     printf ("==============================\n");
     for (i = 0; i < MAX_CONNS; i++)
@@ -159,10 +160,20 @@ print_memif_details ()
                 break;
         }
         printf ("\tsocket filename: %s\n",(char *) md.socket_filename);
-        printf ("\tring_size: %u\n", md.ring_size);
-        printf ("\tbuffer_size: %u\n", md.buffer_size);
-        printf ("\trx queues: %u\n", md.rx_queues);
-        printf ("\ttx queues: %u\n", md.tx_queues);
+        printf ("\trx queues:\n");
+        for (e = 0; e < md.rx_queues_num; e++)
+        {
+            printf ("\t\tqueue id: %u\n", md.rx_queues[e].qid);
+            printf ("\t\tring size: %u\n", md.rx_queues[e].ring_size);
+            printf ("\t\tbuffer size: %u\n", md.rx_queues[e].buffer_size);
+        }
+        printf ("\ttx queues:\n");
+        for (e = 0; e < md.tx_queues_num; e++)
+        {
+            printf ("\t\tqueue id: %u\n", md.tx_queues[e].qid);
+            printf ("\t\tring size: %u\n", md.tx_queues[e].ring_size);
+            printf ("\t\tbuffer size: %u\n", md.tx_queues[e].buffer_size);
+        }
         printf ("\tlink: ");
         if (md.link_up_down)
             printf ("up\n");
@@ -373,7 +384,7 @@ error:
 }
 
 int
-icmpr_memif_create (long index)
+icmpr_memif_create (long index, long mode)
 {
     if (index >= MAX_CONNS)
     {
@@ -391,7 +402,7 @@ icmpr_memif_create (long index)
     memif_conn_args_t args;
     int fd = -1;
     memset (&args, 0, sizeof (args));
-    args.is_master = 1;
+    args.is_master = mode;
     args.log2_ring_size = 10;
     args.buffer_size = 2048;
     args.num_s2m_rings = 2;
@@ -595,6 +606,7 @@ user_input_handler ()
     char *in = (char *) malloc (256);
     char *ui = fgets (in, 256, stdin);
     char *end;
+    long a;
     if (in[0] == '\n')
         goto done;
     ui = strtok (in, " ");
@@ -613,9 +625,17 @@ user_input_handler ()
     {
         ui = strtok (NULL, " ");
         if (ui != NULL)
-            icmpr_memif_create (strtol (ui, &end, 10));
+            a = strtol (ui, &end, 10);
         else
+        {
             INFO ("expected id");
+            goto done;
+        }
+        ui = strtok (NULL, " ");
+        if (ui != NULL)
+            icmpr_memif_create (a, strtol (ui, &end, 10));
+        else
+            INFO ("expected mode <0|1>");
         goto done;
     }
     else if (strncmp (ui, "del", 3) == 0)
@@ -644,7 +664,6 @@ user_input_handler ()
     else if (strncmp (ui, "rx-mode", 7) == 0)
     {
         ui = strtok (NULL, " ");
-        long a;
         if (ui != NULL)
             a = strtol (ui, &end, 10);
         else
@@ -737,7 +756,7 @@ int main ()
     /* if valid callback is passed as argument, fd event polling will be done by user
         all file descriptors and events will be passed to user in this callback */
     /* if callback is set to NULL libmemif will handle fd event polling */
-    err = memif_init (control_fd_update);
+    err = memif_init (control_fd_update, APP_NAME);
     if (err != MEMIF_ERR_SUCCESS)
         INFO ("memif_init: %s", memif_strerror (err));
 

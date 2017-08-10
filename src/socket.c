@@ -103,6 +103,7 @@ memif_msg_enq_ack (memif_connection_t *c)
 static_fn int
 memif_msg_send_hello (int fd)
 {
+    libmemif_main_t *lm = &libmemif_main;
     memif_msg_t msg = { 0 };
     memif_msg_hello_t *h = &msg.hello;
     msg.type = MEMIF_MSG_TYPE_HELLO;
@@ -113,8 +114,8 @@ memif_msg_send_hello (int fd)
     h->max_region = MEMIF_MAX_REGION;
     h->max_log2_ring_size = MEMIF_MAX_LOG2_RING_SIZE;
 
-    strncpy ((char *) h->name, APP_NAME,
-            strlen (APP_NAME));
+    strncpy ((char *) h->name, lm->app_name,
+            strlen (lm->app_name));
 
     /* msg hello is not enqueued but sent directly,
          because it is the first msg to be sent */
@@ -348,13 +349,13 @@ memif_msg_receive_hello (memif_connection_t *c, memif_msg_t *msg)
     /* use nested struct c->run containing following variables?
         (this would be used to adjust shared memory information while keeping
         configured values intact) */
-    DBG ("%u", h->max_s2m_ring);
-    c->args.num_s2m_rings = memif_min (h->max_s2m_ring + 1,
+    c->run_args.num_s2m_rings = memif_min (h->max_s2m_ring + 1,
                                     c->args.num_s2m_rings);
-    c->args.num_m2s_rings = memif_min (h->max_m2s_ring + 1,
+    c->run_args.num_m2s_rings = memif_min (h->max_m2s_ring + 1,
                                     c->args.num_m2s_rings);
-    c->args.log2_ring_size = memif_min (h->max_log2_ring_size,
+    c->run_args.log2_ring_size = memif_min (h->max_log2_ring_size,
                                         c->args.log2_ring_size);
+    c->run_args.buffer_size = c->args.buffer_size;
     strncpy ((char *) c->remote_name, (char *) h->name, strlen ((char *) h->name));
 
     return MEMIF_ERR_SUCCESS; /* 0 */
@@ -523,6 +524,7 @@ memif_msg_receive_add_ring (memif_connection_t *c, memif_msg_t *msg, int fd)
         c->rx_queues[ar->index].log2_ring_size = ar->log2_ring_size;
         c->rx_queues[ar->index].region = ar->region;
         c->rx_queues[ar->index].offset = ar->offset;
+        c->run_args.num_s2m_rings++;
     }
     else
     {
@@ -539,6 +541,7 @@ memif_msg_receive_add_ring (memif_connection_t *c, memif_msg_t *msg, int fd)
         c->tx_queues[ar->index].log2_ring_size = ar->log2_ring_size;
         c->tx_queues[ar->index].region = ar->region;
         c->tx_queues[ar->index].offset = ar->offset;
+        c->run_args.num_m2s_rings++;
     }
 
     return MEMIF_ERR_SUCCESS; /* 0 */
@@ -562,7 +565,7 @@ memif_msg_receive_connect (memif_connection_t *c, memif_msg_t *msg)
     int i;
     if (c->on_interrupt != NULL)
     {
-        for (i = 0; i < c->args.num_m2s_rings; i++)
+        for (i = 0; i < c->run_args.num_m2s_rings; i++)
         {
             elt.key = c->rx_queues[i].int_fd;
             elt.data_struct = c;
@@ -595,7 +598,7 @@ memif_msg_receive_connected (memif_connection_t *c, memif_msg_t *msg)
     int i;
     if (c->on_interrupt != NULL)
     {
-        for (i = 0; i < c->args.num_s2m_rings; i++)
+        for (i = 0; i < c->run_args.num_s2m_rings; i++)
             lm->control_fd_update (c->rx_queues[i].int_fd, MEMIF_FD_EVENT_READ);
     }
 
@@ -695,12 +698,12 @@ memif_msg_receive (int ifd)
                 return err;
             if ((err = memif_msg_enq_add_region (c, 0)) != MEMIF_ERR_SUCCESS)
                 return err;
-            for (i = 0; i < c->args.num_s2m_rings; i++)
+            for (i = 0; i < c->run_args.num_s2m_rings; i++)
             {
                 if ((err = memif_msg_enq_add_ring (c, i, MEMIF_RING_S2M)) != MEMIF_ERR_SUCCESS)
                     return err;
             }
-            for (i = 0; i < c->args.num_m2s_rings; i++)
+            for (i = 0; i < c->run_args.num_m2s_rings; i++)
             {
                 if ((err = memif_msg_enq_add_ring (c, i, MEMIF_RING_M2S)) != MEMIF_ERR_SUCCESS)
                     return err;

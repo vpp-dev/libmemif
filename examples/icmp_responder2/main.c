@@ -106,7 +106,7 @@ print_memif_details ()
     ssize_t buflen = 2048;
     char *buf = malloc (buflen);
     memset (buf, 0, buflen);
-    int err;
+    int err, e;
 
     err = memif_get_details (c->conn, &md, buf, buflen);
     if (err != MEMIF_ERR_SUCCESS)
@@ -147,10 +147,21 @@ print_memif_details ()
             break;
     }
     printf ("\tsocket filename: %s\n",(char *) md.socket_filename);
-    printf ("\tring_size: %u\n", md.ring_size);
-    printf ("\tbuffer_size: %u\n", md.buffer_size);
-    printf ("\trx queues: %u\n", md.rx_queues);
-    printf ("\ttx queues: %u\n", md.tx_queues);
+    printf ("\tsocket filename: %s\n",(char *) md.socket_filename);
+    printf ("\trx queues:\n");
+    for (e = 0; e < md.rx_queues_num; e++)
+    {
+        printf ("\t\tqueue id: %u\n", md.rx_queues[e].qid);
+        printf ("\t\tring size: %u\n", md.rx_queues[e].ring_size);
+        printf ("\t\tbuffer size: %u\n", md.rx_queues[e].buffer_size);
+    }
+    printf ("\ttx queues:\n");
+    for (e = 0; e < md.tx_queues_num; e++)
+    {
+        printf ("\t\tqueue id: %u\n", md.tx_queues[e].qid);
+        printf ("\t\tring size: %u\n", md.tx_queues[e].ring_size);
+        printf ("\t\tbuffer size: %u\n", md.tx_queues[e].buffer_size);
+    }
     printf ("\tlink: ");
     if (md.link_up_down)
         printf ("up\n");
@@ -373,7 +384,7 @@ int main (int argc, char *argv[])
     /* if valid callback is passed as argument, fd event polling will be done by user
         all file descriptors and events will be passed to user in this callback */
     /* if callback is set to NULL libmemif will handle fd event polling */
-    err = memif_init (NULL);
+    err = memif_init (NULL, APP_NAME);
     if (err != MEMIF_ERR_SUCCESS)
         INFO ("memif_init: %s", memif_strerror (err));
 

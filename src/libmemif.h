@@ -20,6 +20,8 @@
 
 #define LIBMEMIF_VERSION "1.0"
 
+#define MEMIF_DEFAULT_APP_NAME "libmemif-app"
+
 #include <inttypes.h>
 
 #include <memif.h>
@@ -156,6 +158,19 @@ typedef struct
     void *data;
 } memif_buffer_t;
 
+/** \briefMemif queue details
+    @param qid - queue id
+    @param ring_size - size of ring buffer in sharem memory
+    @param buffer_size - buffer size on sharem memory
+*/
+typedef struct
+{
+    uint8_t qid;
+    uint32_t ring_size;
+    uint16_t buffer_size;
+    /* add ring information */
+} memif_queue_details_t;
+
 /** \brief Memif details
     @param if_name - interface name
     @param inst_name - application name
@@ -166,10 +181,10 @@ typedef struct
     @param role - 0 = master, 1 = slave
     @param mode - 0 = ethernet, 1 = ip , 2 = punt/inject
     @param socket_filename = socket filename
-    @param ring_size - ring size
-    @param buffer_size - size of buffer in shared memory
-    @param rx_queues - number of receive queues
-    @param tx_queues - number of transmit queues
+    @param rx_queues_num - number of receive queues
+    @param tx_queues_num - number of transmit queues
+    @param rx_queues - struct containing receive queue details
+    @param tx_queues - struct containing transmit queue details
     @param link_up_down - 1 = up (connected), 2 = down (disconnected)
 */
 typedef struct
@@ -184,10 +199,10 @@ typedef struct
     uint8_t role; /* 0 = master, 1 = slave */
     uint8_t mode; /* 0 = ethernet, 1 = ip, 2 = punt/inject */
     uint8_t *socket_filename;
-    uint32_t ring_size;
-    uint16_t buffer_size;
-    uint8_t rx_queues;
-    uint8_t tx_queues;
+    uint8_t rx_queues_num;
+    uint8_t tx_queues_num;
+    memif_queue_details_t *rx_queues;
+    memif_queue_details_t *tx_queues;
 
     uint8_t link_up_down; /* 1 = up, 0 = down */
 } memif_details_t;
@@ -251,6 +266,7 @@ int memif_get_details (memif_conn_handle_t conn, memif_details_t *md,
 
 /** \brief Memif initialization
     @param on_control_fd_update - if control fd updates inform user to watch new fd
+    @param app_name - application name
 
     if param on_control_fd_update is set to NULL,
     libmemif will handle file descriptor event polling
@@ -269,13 +285,14 @@ int memif_get_details (memif_conn_handle_t conn, memif_details_t *md,
     disconnected memifs in slave mode, with no additional API call). this fd is passed to user with memif_control_fd_update_t
     timer is inactive at this state. it activates with if there is at least one memif in slave mode
 */
-int memif_init (memif_control_fd_update_t *on_control_fd_update);
+int memif_init (memif_control_fd_update_t *on_control_fd_update, char *app_name);
 
 /** \brief Memory interface create function
     @param conn - connection handle for user app
     @param args - memory interface connection arguments
     @param on_connect - inform user about connected status
     @param on_disconnect - inform user about disconnected status
+    @param on_interrupt - informs user about interrupt, if set to null user will not be notified about interrupt, user can use memif_get_queue_efd call to get interrupt fd to poll for events
     @param private_ctx - private contex passed back to user with callback
 
     creates memory interface.
