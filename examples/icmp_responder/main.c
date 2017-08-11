@@ -482,7 +482,7 @@ print_help ()
     printf ("commands:\n");
     printf ("\thelp - prints this help\n");
     printf ("\texit - exit app\n");
-    printf ("\tconn <index> - create memif (slave-mode)\n");
+    printf ("\tconn <index> <mode> - create memif. index is also used as interface id, mode 0 = slave 1 = master\n");
     printf ("\tdel  <index> - delete memif\n");
     printf ("\tshow - show connection details\n");
     printf ("\tip-set <index> <ip-addr> - set interface ip address\n");
