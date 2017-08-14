@@ -23,6 +23,8 @@ Shared memory packet interface (memif) provides high performance packet transmit
 
 ## Quickstart
 
+For information on how to use libmemif API, please refer to [User manual](UserManual.md).
+
 #### Run in container
 
 Install [docker](https://docs.docker.com/engine/installation) engine.
@@ -75,11 +77,11 @@ commands:
 
 Build process is explained in [User Manual](UserManual.md).
 
-#### Connection to VPP-memif
+### Connection to VPP-memif
 
 > Libmemif example app(s) use memif default socket file: /run/vpp/memif.sock.
 
-###### Example setup (VPP-memif master icmp_responder slave)
+#### Example setup (VPP-memif master icmp_responder slave)
 
 Run VPP and icmp_responder example.
 VPP-side config:
@@ -156,7 +158,7 @@ DBGvpp# ping 192.168.1.2
 
 Statistics: 5 sent, 4 received, 20% packet loss
 ```
-###### Example setup multiple queues (VPP-memif slave icmp_responder master)
+#### Example setup multiple queues (VPP-memif slave icmp_responder master)
 
 Run icmp_responder as in previous example setup.
 Run VPP with startup conf, enabling 2 worker threads.
