@@ -313,6 +313,12 @@ add_list_elt (memif_list_elt_t *e, memif_list_elt_t **list, uint16_t *len)
     if (tmp == NULL)
         return -1;
 
+    for (i = *len; i < *len * 2; i++)
+    {
+        tmp[i].key = -1;
+        tmp[i].data_struct = NULL;
+    }
+
     tmp[*len].key = e->key;
     tmp[*len].data_struct = e->data_struct;
     i = *len;
@@ -325,6 +331,11 @@ add_list_elt (memif_list_elt_t *e, memif_list_elt_t **list, uint16_t *len)
 int
 get_list_elt (memif_list_elt_t **e, memif_list_elt_t *list, uint16_t len, int key)
 {
+    if (key == -1)
+    {
+        *e = NULL;
+        return -1;
+    }
     int i;
     for (i = 0; i < len; i++)
     {
@@ -356,6 +367,25 @@ free_list_elt (memif_list_elt_t *list, uint16_t len, int key)
     return -1;
 }
 
+int
+free_list_elt_ctx (memif_list_elt_t *list, uint16_t len, memif_connection_t *ctx)
+{
+    int i;
+    for (i = 0; i < len; i++)
+    {
+        if (list[i].key == -1)
+        {
+            if (list[i].data_struct == ctx)
+            {
+                list[i].data_struct = NULL;
+                return 0;
+            }
+        }
+    }
+
+    return -1;
+}
+
 static void
 memif_control_fd_update_register (memif_control_fd_update_t *cb)
 {
@@ -370,17 +400,17 @@ int memif_init (memif_control_fd_update_t *on_control_fd_update, char *app_name)
 
     if (app_name)
     {
-        lm->app_name = malloc (strlen (app_name));
+        lm->app_name = malloc (strlen (app_name) + sizeof (char));
+        memset (lm->app_name, 0, strlen (app_name) + sizeof (char));
         strncpy ((char *) lm->app_name, app_name, strlen (app_name));
     }
     else
     {
-        lm->app_name = malloc (strlen (MEMIF_DEFAULT_APP_NAME));
+        lm->app_name = malloc (strlen (MEMIF_DEFAULT_APP_NAME) + sizeof (char));
+        memset (lm->app_name, 0, strlen (app_name) + sizeof (char));
         strncpy ((char *) lm->app_name, MEMIF_DEFAULT_APP_NAME,
                     strlen (MEMIF_DEFAULT_APP_NAME));
     }
-
-    DBG ("app name: %s", lm->app_name);
 
     /* register control fd update callback */
     if (on_control_fd_update != NULL)
@@ -609,13 +639,17 @@ memif_create (memif_conn_handle_t *c, memif_conn_args_t *args,
                 }
                 DBG ("creating socket file");
                 ms = malloc (sizeof (memif_socket_t));
-                ms->filename = malloc (strlen ((char *) conn->args.socket_filename));
+                ms->filename = malloc (strlen (
+                        (char *) conn->args.socket_filename) + sizeof (char));
+                memset (ms->filename, 0, strlen (
+                            (char *) conn->args.socket_filename) + sizeof (char));
                 strncpy ((char *) ms->filename, (char *) conn->args.socket_filename,
                                 strlen ((char *) conn->args.socket_filename));
                 ms->interface_list_len = 1;
                 ms->interface_list = malloc (
                         sizeof (memif_list_elt_t) * ms->interface_list_len);
-                DBG ("filename: %s", (char *) ms->filename);
+                ms->interface_list[0].key = -1;
+                ms->interface_list[0].data_struct = NULL;
                 struct sockaddr_un un = { 0 };
                 int on = 1;
 
@@ -917,6 +951,8 @@ memif_disconnect_internal (memif_connection_t *c, uint8_t is_del)
             free_list_elt (lm->control_list, lm->control_list_len, c->fd);
         e->key = c->fd = -1;
     }
+    else if (is_del)
+        free_list_elt_ctx (lm->control_list, lm->control_list_len, c);
 
     if (c->tx_queues != NULL)
     {
@@ -1086,6 +1122,7 @@ memif_connect1 (memif_connection_t *c)
                 DBG ("wrong cookie on tx ring %u", i);
                 return MEMIF_ERR_COOKIE;
             }
+            mq->ring->head = mq->ring->tail = mq->last_head = mq->alloc_bufs = 0;
         }
     }
     num = (c->args.is_master) ? c->run_args.num_s2m_rings : c->run_args.num_m2s_rings;
@@ -1100,6 +1137,7 @@ memif_connect1 (memif_connection_t *c)
                 DBG ("wrong cookie on rx ring %u", i);
                 return MEMIF_ERR_COOKIE;
             }
+            mq->ring->head = mq->ring->tail = mq->last_head = mq->alloc_bufs = 0;
         }
     }
 
@@ -1133,10 +1171,10 @@ memif_init_regions_and_queues (memif_connection_t *conn)
     
     if ((r->fd = memfd_create ("memif region 0", MFD_ALLOW_SEALING)) == -1)
         return memif_syscall_error_handler (errno);
-
+/*
     if ((fcntl (r->fd, F_ADD_SEALS, F_SEAL_SHRINK)) == -1)
         return memif_syscall_error_handler (errno);
-
+*/
     if ((ftruncate (r->fd, r->region_size)) == -1)
         return memif_syscall_error_handler (errno);
 
@@ -1296,8 +1334,7 @@ memif_buffer_alloc (memif_conn_handle_t conn, uint16_t qid,
     }
 
     mq->alloc_bufs += *count_out;
-
-    DBG ("allocated: %u/%u bufs. Total %u allocated bufs", *count_out, count, mq->alloc_bufs);
+            DBG ("allocated: %u/%u bufs. Total %u allocated bufs", *count_out, count, mq->alloc_bufs);
 
     if (count)
     {
@@ -1659,4 +1696,27 @@ memif_get_queue_efd (memif_conn_handle_t conn, uint16_t qid, int *efd)
     *efd = c->rx_queues[qid].int_fd;
 
     return MEMIF_ERR_SUCCESS;    
+}
+
+int
+memif_cleanup ()
+{
+    libmemif_main_t *lm = &libmemif_main;
+    if (lm->app_name)
+        free (lm->app_name);
+    lm->app_name = NULL;
+    if (lm->control_list)
+        free (lm->control_list);
+    lm->control_list = NULL;
+    if (lm->interrupt_list)
+        free (lm->interrupt_list);
+    lm->interrupt_list = NULL;
+    if (lm->listener_list)
+        free (lm->listener_list);
+    lm->listener_list = NULL;
+    if (lm->pending_list)
+        free (lm->pending_list);
+    lm->pending_list = NULL;
+
+    return MEMIF_ERR_SUCCESS; /* 0 */
 }

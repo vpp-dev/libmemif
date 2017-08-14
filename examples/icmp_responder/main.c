@@ -68,7 +68,7 @@
 
 /* maximum tx/rx memif buffers */
 #define MAX_MEMIF_BUFS  256
-#define MAX_CONNS       2
+#define MAX_CONNS       50
 
 int epfd;
 
@@ -92,6 +92,7 @@ typedef struct
 } memif_connection_t;
 
 memif_connection_t memif_connection[MAX_CONNS];
+long ctx[MAX_CONNS];
 
 /* print details for all memif connections */
 static void
@@ -417,10 +418,8 @@ icmpr_memif_create (long index, long mode)
     args.interface_id = index;
     /* last argument for memif_create (void * private_ctx) is used by user
        to identify connection. this context is returned with callbacks */
-    long *ctx = malloc (sizeof (long));
-    *ctx = index;
     int err = memif_create (&c->conn,
-                    &args, on_connect, on_disconnect, on_interrupt, ctx);
+                    &args, on_connect, on_disconnect, on_interrupt, &ctx[index]);
     if (err != MEMIF_ERR_SUCCESS)
     {
         INFO ("memif_create: %s", memif_strerror (err));
@@ -456,11 +455,22 @@ icmpr_memif_delete (long index)
     }
     memif_connection_t *c = &memif_connection[index];
 
+    if (c->rx_bufs)
+        free (c->rx_bufs);
+    c->rx_bufs = NULL;
+    c->rx_buf_num = 0;
+    if (c->tx_bufs)
+        free (c->tx_bufs);
+    c->tx_bufs = NULL;
+    c->tx_buf_num = 0;
+    
     int err;
     /* disconenct then delete memif connection */
     err = memif_delete (&c->conn);
     if (err != MEMIF_ERR_SUCCESS)
         INFO ("memif_delete: %s", memif_strerror (err));
+    if (c->conn != NULL)
+        INFO ("memif delete fail");
     return 0;
 }
 
@@ -492,16 +502,17 @@ int
 icmpr_free ()
 { 
     /* application cleanup */
+    int err;
     long i;
     for (i = 0; i < MAX_CONNS; i++)
     {
         memif_connection_t *c = &memif_connection[i];
         icmpr_memif_delete (i);
-        free (c->tx_bufs);
-        c->tx_bufs = NULL;
-        free (c->rx_bufs);
-        c->rx_bufs = NULL;
     }
+
+    err = memif_cleanup ();
+    if (err != MEMIF_ERR_SUCCESS)
+        INFO ("memif_delete: %s", memif_strerror (err));
 
     return 0;
 }
@@ -752,7 +763,7 @@ int main ()
     add_epoll_fd (0, EPOLLIN);
 
     /* initialize memory interface */
-    int err;
+    int err, i;
     /* if valid callback is passed as argument, fd event polling will be done by user
         all file descriptors and events will be passed to user in this callback */
     /* if callback is set to NULL libmemif will handle fd event polling */
@@ -760,6 +771,11 @@ int main ()
     if (err != MEMIF_ERR_SUCCESS)
         INFO ("memif_init: %s", memif_strerror (err));
 
+    for (i = 0; i < MAX_CONNS; i++)
+    {
+        ctx[i] = i;
+    }
+    
     print_help ();
 
     /* main loop */

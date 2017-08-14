@@ -101,6 +101,7 @@ typedef struct
 } memif_connection_t;
 
 memif_connection_t memif_connection[MAX_CONNS];
+long ctx[MAX_CONNS];
 
 /* thread data specific for each thread */
 memif_thread_data_t thread_data[MAX_THREADS];
@@ -269,7 +270,7 @@ memif_rx_poll (void *ptr)
     memif_thread_data_t *data = (memif_thread_data_t *) ptr;
     memif_connection_t *c = &memif_connection[data->index];
     int err;
-    uint16_t rx, tx, fb;
+    uint16_t rx = 0, tx = 0, fb = 0;
 
     data->rx_bufs = malloc (sizeof (memif_buffer_t) * MAX_MEMIF_BUFS);
     data->tx_bufs = malloc (sizeof (memif_buffer_t) * MAX_MEMIF_BUFS);
@@ -364,7 +365,7 @@ memif_rx_interrupt (void *ptr)
     memif_thread_data_t *data = (memif_thread_data_t *) ptr;
     memif_connection_t *c = &memif_connection[data->index];
     int err;
-    uint16_t rx, tx, fb;
+    uint16_t rx = 0, tx = 0, fb = 0;
     struct epoll_event evt, *e;
     int en = 0;
     uint32_t events = 0;
@@ -584,10 +585,8 @@ icmpr_memif_create (long index)
     args.interface_id = index;
     /* last argument for memif_create (void * private_ctx) is used by user
        to identify connection. this context is returned with callbacks */
-    long *ctx = malloc (sizeof (long));
-    *ctx = index;
     int err = memif_create (&c->conn,
-                    &args, on_connect, on_disconnect, NULL, ctx);
+                    &args, on_connect, on_disconnect, NULL, &ctx[index]);
     if (err != MEMIF_ERR_SUCCESS)
     {
         INFO ("memif_create: %s", memif_strerror (err));
@@ -654,6 +653,7 @@ int
 icmpr_free ()
 { 
     /* application cleanup */
+    int err;
     long i;
     for (i = 0; i < MAX_CONNS; i++)
     {
@@ -661,7 +661,9 @@ icmpr_free ()
         icmpr_memif_delete (i);
     }
 
-    pthread_exit (NULL);
+    err = memif_cleanup ();
+    if (err != MEMIF_ERR_SUCCESS)
+        INFO ("memif_delete: %s", memif_strerror (err));
 
     return 0;
 }
@@ -852,13 +854,18 @@ int main ()
     add_epoll_fd (main_epfd, 0, EPOLLIN);
 
     /* initialize memory interface */
-    int err;
+    int err, i;
     /* if valid callback is passed as argument, fd event polling will be done by user
         all file descriptors and events will be passed to user in this callback */
     /* if callback is set to NULL libmemif will handle fd event polling */
     err = memif_init (control_fd_update, APP_NAME);
     if (err != MEMIF_ERR_SUCCESS)
         INFO ("memif_init: %s", memif_strerror (err));
+
+    for (i = 0; i < MAX_CONNS; i++)
+    {
+        ctx[i] = i;
+    }
 
     print_help ();
 

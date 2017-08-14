@@ -256,11 +256,16 @@ int
 icmpr_free ()
 {
     /* application cleanup */
+    int err;
     memif_connection_t *c = &memif_connection;
     free (c->tx_bufs);
     c->tx_bufs = NULL;
     free (c->rx_bufs);
     c->rx_bufs = NULL;
+
+    err = memif_cleanup ();
+    if (err != MEMIF_ERR_SUCCESS)
+        INFO ("memif_delete: %s", memif_strerror (err));
 
     return 0;
 }

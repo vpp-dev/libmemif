@@ -346,9 +346,7 @@ memif_msg_receive_hello (memif_connection_t *c, memif_msg_t *msg)
         DBG ("incompatible protocol version");
         return MEMIF_ERR_PROTO;
     }
-    /* use nested struct c->run containing following variables?
-        (this would be used to adjust shared memory information while keeping
-        configured values intact) */
+
     c->run_args.num_s2m_rings = memif_min (h->max_s2m_ring + 1,
                                     c->args.num_s2m_rings);
     c->run_args.num_m2s_rings = memif_min (h->max_m2s_ring + 1,
@@ -371,6 +369,7 @@ memif_msg_receive_init (memif_socket_t *ms, int fd, memif_msg_t *msg)
     memif_connection_t *c = NULL;
     libmemif_main_t *lm = &libmemif_main;
     uint8_t err_string[96];
+    memset (err_string, 0, sizeof (char) * 96);
     int err = MEMIF_ERR_SUCCESS; /* 0 */
     int err_disc;
     if (i->version != MEMIF_VERSION)

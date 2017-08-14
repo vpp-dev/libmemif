@@ -287,6 +287,12 @@ int memif_get_details (memif_conn_handle_t conn, memif_details_t *md,
 */
 int memif_init (memif_control_fd_update_t *on_control_fd_update, char *app_name);
 
+/** \brief Memif cleanup
+
+    free libmemif internal allocations
+*/
+int memif_cleanup ();
+
 /** \brief Memory interface create function
     @param conn - connection handle for user app
     @param args - memory interface connection arguments
