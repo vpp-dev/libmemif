@@ -1,66 +1,5 @@
 ## Getting started
 
-#### Build
-
-Install dependencies
-```
-# sudo apt-get install -y git autoconf pkg_config libtool check
-```
-
-Clone repository to your local machine. 
-```
-# git clone https://github.com/JakubGrajciar/libmemif.git
-```
-
-From root directory execute:
-For debug build:
-```
-# ./bootstrap
-# ./configure
-# make
-# make install
-```
-
-For release build:
-```
-# ./bootstrap
-# ./configure
-# make release
-# make install
-```
-Verify installation:
-```
-# ./.libs/icmp_responder
-```
-> Make sure to run the binary file from ./.libs. File ./icmp\_responder in libmemif root directory is script that links the library, so it only verifies successful build. Default install path is /usr/lib.
-Use _help_ command to display build information and commands:
-```
-ICMP_Responder:add_epoll_fd:204: fd 0 added to epoll
-MEMIF_DEBUG:src/main.c:memif_init:383: app name: ICMP_Responder
-ICMP_Responder:add_epoll_fd:204: fd 4 added to epoll
-LIBMEMIF EXAMPLE APP: ICMP_Responder (debug)
-==============================
-libmemif version: 1.0 (debug)
-memif version: 256
-commands:
-	help - prints this help
-	exit - exit app
-	conn <index> - create memif (slave-mode)
-	del  <index> - delete memif
-	show - show connection details
-	ip-set <index> <ip-addr> - set interface ip address
-	rx-mode <index> <qid> <polling|interrupt> - set queue rx mode
-```
-
-#### Unit tests
-
-Unit tests use [Check](https://libcheck.github.io/check/index.html) framework. This framework must be installed in order to build *unit\_test* binary.
-Ubuntu/Debian:
-```
-sudo apt-get install check
-```
-[More platforms](https://libcheck.github.io/check/web/install.html)
-
 #### Concept (Connecting to VPP)
 
 For detailed information on api calls and structures please refer to [libmemif.h](src/libmemif.h)
@@ -179,10 +118,8 @@ typedef struct
 ```C
 err = memif_rx_burst (c->conn, qid, c->rx_bufs, MAX_MEMIF_BUFS, &rx);
 ```
-
     - User application can then process packets.
     - Api call memif\_buffer\_free will make supplied memif buffers ready for next receive and mark shared memory buffers as free.
-
 ```C
 err = memif_buffer_free (c->conn, qid, c->rx_bufs, rx, &fb);
 ```
@@ -192,10 +129,8 @@ err = memif_buffer_free (c->conn, qid, c->rx_bufs, rx, &fb);
 ```C
 err = memif_buffer_alloc (c->conn, qid, c->tx_bufs, n, &r);
 ```
-
     - User application can populate shared memory buffers with packets.
     - Api call memif\_tx\_burst will inform peer interface (master memif on VPP) that there are packets ready to receive and mark memif buffers as free.
-
 ```C
 err = memif_tx_burst (c->conn, qid, c->tx_bufs, c->tx_buf_num, &r);
 ```
@@ -215,23 +150,23 @@ if (err != MEMIF_ERR_SUCCESS)
 ```
         - Not all syscall errors are translated to memif error codes. If error code 1 (MEMIF\_ERR\_SYSCALL) is returned then libmemif needs to be compiled with -DMEMIF_DBG flag to print error message. Use _make -B_ to rebuild libmemif in debug mode.
 
-#### Example app:
-
-- [ICMP Responder](examples/icmp_responder/main.c)
-
 #### Example app (libmemif fd event polling):
 
-- [ICMP Responder](examples/icmp_responder2/main.c)
+- [ICMP Responder](examples/icmp_responder/main.c)
 > Optional argument: transmit queue id.
 ```
-icmpr_lep 1
+icmpr 1
 ```
 > Set transmit queue id to 1. Default is 0.
 > Application will create memif interface in slave mode and try to connect to VPP. Exit using Ctrl+C. Application will handle SIGINT signal, free allocated memory and exit with EXIT_SUCCESS.
 
+#### Example app:
+
+- [ICMP Responder custom fd event polling](examples/icmp_responder-epoll/main.c)
+
 #### Example app (multi-thread queue polling)
 
-- [ICMP Responder](examples/icmp_responder3/main.c)
+- [ICMP Responder multi-thread](examples/icmp_responder-mt/main.c)
 
 > Simple example of libmemif multi-thread usage. Connection establishment is handled by main thread. There are two rx queues in this example. One in polling mode and second in interrupt mode.
 
@@ -268,4 +203,13 @@ VPP config:
 ```
 > Example applications use VPP default socket file for memif: /run/vpp/memif.sock
 > For master mode, socket directory must exist prior to memif\_create call.
+
+#### Unit tests
+
+Unit tests use [Check](https://libcheck.github.io/check/index.html) framework. This framework must be installed in order to build *unit\_test* binary.
+Ubuntu/Debian:
+```
+sudo apt-get install check
+```
+[More platforms](https://libcheck.github.io/check/web/install.html)
 

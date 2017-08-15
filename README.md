@@ -2,7 +2,7 @@ Shared Memory Packet Interface (memif) Library
 ==============================================
 ## Introduction
 
-Shared memory packet interface (memif) provides high performance packet transmit and receive between user application and Vector Packet Processing (VPP). 
+Shared memory packet interface (memif) provides high performance packet transmit and receive between user application and Vector Packet Processing (VPP).
 
 ## Features
 
@@ -19,40 +19,32 @@ Shared memory packet interface (memif) provides high performance packet transmit
 - [x] Master mode
 	- [ ] Multiple regions (TODO)
 - [ ] Performance testing (TODO)
-- [ ] Documentation (TODO)
 
 ## Quickstart
 
-For information on how to use libmemif API, please refer to [User manual](UserManual.md).
+For information on how to use libmemif API, please refer to [Getting started](GettingStarted.md).
 
 #### Run in container
 
 Install [docker](https://docs.docker.com/engine/installation) engine.
 Useful link: [Docker documentation](https://docs.docker.com/get-started).
 
+Pull image:
+```
+# docker pull ligato/libmemif-sample-service
+```
 
-Use [example dockerfile](dockerfile). This dockerfile builds and installs libmemif in debug mode and runs ICMP responder example app. Run following command in directory with example dockerfile:
-```
-# docker build .
-```
-When build is completed:
+Now you should be able to see ligato/libmemif-sample-service image on your local machine (IMAGE ID in this README may be outdated):
 ```
 # docker images
-REPOSITORY                     TAG                 IMAGE ID            CREATED             SIZE
-<none>                         <none>              c83438f19940        3 seconds ago       468MB
-ubuntu                         xenial              0ef2e08ed3fa        5 months ago        130MB
+REPOSITORY                       TAG                 IMAGE ID            CREATED              SIZE
+ligato/libmemif-sample-service   latest              32ecc2f9d013        About a minute ago   468MB
+...
 ```
-Tag your new image:
-```
-# docker tag c83438f19940 icmp-responder:latest
-# docker images
-REPOSITORY                     TAG                 IMAGE ID            CREATED             SIZE
-icmp-responder                 latest              c83438f19940        3 seconds ago       468MB
-ubuntu                         xenial              0ef2e08ed3fa        5 months ago        130MB
-```
+
 Run container:
 ```
-docker run -it --rm --name icmp-responder --hostname icmp-responder --privileged -v "/run/vpp/:/run/vpp/" icmp-responder
+# docker run -it --rm --name icmp-responder --hostname icmp-responder --privileged -v "/run/vpp/:/run/vpp/" ligato/libmemif-sample-service
 ```
 Example application will start in debug mode. Output should look like this:
 ```
@@ -73,190 +65,20 @@ commands:
 	rx-mode <index> <qid> <polling|interrupt> - set queue rx mode
 ```
 
-#### Run without container
+[Example setup](ExampleSetup.md) contains instructions on how to set up conenction between icmpr-epoll example app and VPP-memif.
 
-Build process is explained in [User Manual](UserManual.md).
+This image contains more example apps. To run different examples, override docker CMD to start container in bash:
+```
+# docker run -it --entrypoint=/bin/bash -i --rm --name icmp-responder --hostname icmp-responder --privileged -v "/run/vpp/:/run/vpp/" ligato/libmemif-sample-service
+```
+Current WORKDIR is root repository directory. Example apps can be run from this directory (a script linking binary with library), or browse to ./.libs folder and execute binary directly. Example apps:
+1. icmpr
+> Simplest implementaion. Event polling is handled by libmemif. Single memif conenction in slave mode is created (id 0). Use Ctrl + C to exit app.
+2. icmpr-epoll (run in container by default)
+> Supports multiple connections and master mode. User can create/delete connections, set ip addresses, print connection information.
+3. icmpr-mt
+> Multi-thread example, very similar to icmpr-epoll. Packets are handled in threads assigned to specific queues. Slave mode only.
 
-### Connection to VPP-memif
+#### Build from source
 
-> Libmemif example app(s) use memif default socket file: /run/vpp/memif.sock.
-
-#### Example setup (VPP-memif master icmp_responder slave)
-
-Run VPP and icmp_responder example.
-VPP-side config:
-```
-# create memif id 0 master
-# set int state memif0/0 up
-# set int ip address memif0/0 192.168.1.1/24
-```
-icmp_responder:
-```
-# conn 0 0
-```
-Memif in slave mode will try to connect every 2 seconds. If connection establishment is successfull, a message will show.
-```
-INFO: memif connected!
-```
-> Error messages like "unmatched interface id" are printed only in debug mode.
-
-Check connected status.
-Use show command in icmp_responder
-```
-show
-MEMIF DETAILS
-==============================
-interface index: 0
-	interface ip: 192.168.1.2
-	interface name: memif_connection
-	app name: ICMP_Responder
-	remote interface name: memif0/0
-	remote app name: VPP 17.10-rc0~132-g62f9cdd
-	id: 0
-	secret: 
-	role: slave
-	mode: ethernet
-	socket filename: /run/vpp/memif.sock
-	rx queues:
-		queue id: 0
-		ring size: 1024
-		buffer size: 2048
-	tx queues:
-		queue id: 0
-		ring size: 1024
-		buffer size: 2048
-	link: up
-interface index: 1
-	no connection
-
-```
-Use sh memif command in VPP:
-```
-DBGvpp# sh memif
-interface memif0/0
-  remote-name "ICMP_Responder"
-  remote-interface "memif_connection"
-  id 0 mode ethernet file /run/vpp/memif.sock
-  flags admin-up connected
-  listener-fd 12 conn-fd 13
-  num-s2m-rings 1 num-m2s-rings 1 buffer-size 0
-    master-to-slave ring 0:
-      region 0 offset 32896 ring-size 1024 int-fd 16
-      head 0 tail 0 flags 0x0000 interrupts 0
-    master-to-slave ring 0:
-      region 0 offset 0 ring-size 1024 int-fd 15
-      head 0 tail 0 flags 0x0001 interrupts 0
-```
-
-Send ping from VPP to icmp_responder:
-```
-DBGvpp# ping 192.168.1.2
-64 bytes from 192.168.1.2: icmp_seq=2 ttl=64 time=.1888 ms
-64 bytes from 192.168.1.2: icmp_seq=3 ttl=64 time=.1985 ms
-64 bytes from 192.168.1.2: icmp_seq=4 ttl=64 time=.1813 ms
-64 bytes from 192.168.1.2: icmp_seq=5 ttl=64 time=.1929 ms
-
-Statistics: 5 sent, 4 received, 20% packet loss
-```
-#### Example setup multiple queues (VPP-memif slave icmp_responder master)
-
-Run icmp_responder as in previous example setup.
-Run VPP with startup conf, enabling 2 worker threads.
-Example startup.conf:
-```
-unix {
-  interactive
-  nodaemon
-  full-coredump
-}
-
-cpu {
-  workers 2
-}
-```
-VPP-side config:
-```
-# create memif id 0 slave rx-queues 2 tx-queues 2
-# set int state memif0/0 up
-# set int ip address memif0/0 192.168.1.1/24
-```
-icmp_responder:
-```
-# conn 0 1
-```
-When connection is established a message will print:
-```
-INFO: memif connected!
-```
-> Error messages like "unmatched interface id" are printed only in debug mode.
-
-Check connected status.
-Use show command in icmp_responder
-```
-show
-MEMIF DETAILS
-==============================
-interface index: 0
-	interface ip: 192.168.1.2
-	interface name: memif_connection
-	app name: ICMP_Responder
-	remote interface name: memif0/0
-	remote app name: VPP 17.10-rc0~132-g62f9cdd
-	id: 0
-	secret: 
-	role: master
-	mode: ethernet
-	socket filename: /run/vpp/memif.sock
-	rx queues:
-		queue id: 0
-		ring size: 1024
-		buffer size: 2048
-		queue id: 1
-		ring size: 1024
-		buffer size: 2048
-	tx queues:
-		queue id: 0
-		ring size: 1024
-		buffer size: 2048
-		queue id: 1
-		ring size: 1024
-		buffer size: 2048
-	link: up
-interface index: 1
-	no connection
-
-```
-Use sh memif command in VPP:
-```
-DBGvpp# sh memif
-interface memif0/0
-  remote-name "ICMP_Responder"
-  remote-interface "memif_connection"
-  id 0 mode ethernet file /run/vpp/memif.sock
-  flags admin-up slave connected
-  listener-fd -1 conn-fd 12
-  num-s2m-rings 2 num-m2s-rings 2 buffer-size 2048
-    slave-to-master ring 0:
-      region 0 offset 0 ring-size 1024 int-fd 14
-      head 0 tail 0 flags 0x0000 interrupts 0
-    slave-to-master ring 1:
-      region 0 offset 32896 ring-size 1024 int-fd 15
-      head 0 tail 0 flags 0x0000 interrupts 0
-    slave-to-master ring 0:
-      region 0 offset 65792 ring-size 1024 int-fd 16
-      head 0 tail 0 flags 0x0001 interrupts 0
-    slave-to-master ring 1:
-      region 0 offset 98688 ring-size 1024 int-fd 17
-      head 0 tail 0 flags 0x0001 interrupts 0
-
-```
-Send ping from VPP to icmp_responder:
-```
-DBGvpp# ping 192.168.1.2
-64 bytes from 192.168.1.2: icmp_seq=2 ttl=64 time=.1439 ms
-64 bytes from 192.168.1.2: icmp_seq=3 ttl=64 time=.2184 ms
-64 bytes from 192.168.1.2: icmp_seq=4 ttl=64 time=.1458 ms
-64 bytes from 192.168.1.2: icmp_seq=5 ttl=64 time=.1687 ms
-
-Statistics: 5 sent, 4 received, 20% packet loss
-```
+Build process is explained in [Build Instructions](BuildInstructions.md).
