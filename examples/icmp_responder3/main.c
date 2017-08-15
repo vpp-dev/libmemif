@@ -69,8 +69,9 @@
 
 /* maximum tx/rx memif buffers */
 #define MAX_MEMIF_BUFS  256
-#define MAX_CONNS       1
-#define MAX_THREADS     4
+#define MAX_CONNS       50
+#define MAX_QUEUES      2
+#define MAX_THREADS     ((MAX_CONNS) * (MAX_QUEUES))
 
 int main_epfd;
 
@@ -82,6 +83,7 @@ typedef struct
     uint16_t index;
     /* id of queue to be handled by thread */
     uint8_t qid;
+    uint8_t isRunning;
 
     uint16_t rx_buf_num;
     uint16_t tx_buf_num;
@@ -119,35 +121,27 @@ print_memif_details ()
     memif_details_t md;
     ssize_t buflen;
     char *buf;
-    int err, i, e;
+    int err, i, e, ti;
+    buflen = 2048;
+    buf = malloc (buflen);
     printf ("MEMIF DETAILS\n");
     printf ("==============================\n");
     for (i = 0; i < MAX_CONNS; i++)
     {
         memif_connection_t *c = &memif_connection[i];
-        printf ("interface index: %d\n", i);
 
         memset (&md, 0, sizeof (md));
-        buflen = 2048;
-        buf = malloc (buflen);
         memset (buf, 0, buflen);
 
         err = memif_get_details (c->conn, &md, buf, buflen);
         if (err != MEMIF_ERR_SUCCESS)
         {   
-            if (err == MEMIF_ERR_NOCONN)
-            {   
-                printf ("\tno connection\n");
-                free (buf);
-                continue;
-            }
-            else
-            {   
+            if (err != MEMIF_ERR_NOCONN)
                 INFO ("%s", memif_strerror (err));
-                free (buf);
-                continue;
-            }
+            continue;
         }
+
+        printf ("interface index: %d\n", i);
 
         printf ("\tinterface ip: %u.%u.%u.%u\n",
                     c->ip_addr[0], c->ip_addr[1], c->ip_addr[2], c->ip_addr[3]);
@@ -182,9 +176,17 @@ print_memif_details ()
         printf ("\trx queues:\n");
         for (e = 0; e < md.rx_queues_num; e++)
         {
+            ti = (i * MAX_QUEUES) + e;
             printf ("\tqueue id: %u\n", md.rx_queues[e].qid);
             printf ("\t\tring size: %u\n", md.rx_queues[e].ring_size);
             printf ("\t\tbuffer size: %u\n", md.rx_queues[e].buffer_size);
+            printf ("\t\tthread id: %u\n", thread_data[ti].id);
+            printf ("\t\tthread connection index: %u\n", thread_data[ti].index);
+            printf ("\t\tthread running: ");
+            if (thread_data[ti].isRunning)
+                printf ("yes\n");
+            else
+                printf ("no");
         }
         printf ("\ttx queues:\n");
         for (e = 0; e < md.tx_queues_num; e++)
@@ -198,9 +200,8 @@ print_memif_details ()
             printf ("up\n");
         else
             printf ("down\n");
-
-        free (buf);
     }
+    free (buf);
 }
 
 int
@@ -277,6 +278,7 @@ memif_rx_poll (void *ptr)
     data->rx_buf_num = 0;
     data->tx_buf_num = 0;
 
+    data->isRunning = 1;
     INFO ("pthread id %u starts in polling mode", data->id);
     
     while (1)
@@ -355,6 +357,7 @@ close:
                 fb, data->rx_buf_num, MAX_MEMIF_BUFS - data->rx_buf_num);
     free (data->rx_bufs);
     free (data->tx_bufs);
+    data->isRunning = 0;
     INFO ("pthread id %u exit", data->id);
     pthread_exit (NULL);
 }
@@ -378,6 +381,7 @@ memif_rx_interrupt (void *ptr)
     data->rx_buf_num = 0;
     data->tx_buf_num = 0;
 
+    data->isRunning = 1;
     INFO ("pthread id %u starts in interrupt mode", data->id);
     int thread_epfd = epoll_create (1);
 
@@ -478,6 +482,7 @@ close:
                 fb, data->rx_buf_num, MAX_MEMIF_BUFS - data->rx_buf_num);
     free (data->rx_bufs);
     free (data->tx_bufs);
+    data->isRunning = 0;
     INFO ("pthread id %u exit", data->id);
     pthread_exit (NULL);
 
@@ -489,26 +494,36 @@ int
 on_connect (memif_conn_handle_t conn, void *private_ctx)
 {
     long index = (*(long *) private_ctx);
-    int err;
+    int err, i, ti;
     INFO ("memif connected! index %ld", index);
     memif_connection_t *c = &memif_connection[index];
-    err = memif_set_rx_mode (c->conn, MEMIF_RX_MODE_POLLING, 0);
-    if (err != MEMIF_ERR_SUCCESS)
-        INFO ("memif_set_rx_mode: %s qid: %u", memif_strerror (err), 0);
-    err = memif_set_rx_mode (c->conn, MEMIF_RX_MODE_INTERRUPT, 1);
-    if (err != MEMIF_ERR_SUCCESS)
-        INFO ("memif_set_rx_mode: %s qid: %u", memif_strerror (err), 1);
     c->pending_del = 0;
-    thread_data[index].index = index;
-    thread_data[index].qid = 0;
-    thread_data[index].id = 0;
-    pthread_create (&thread[0], NULL, memif_rx_poll, (void *) &thread_data[index]);
 
-    thread_data[index + 1].index = index;
-    thread_data[index + 1].qid = 1;
-    thread_data[index + 1].id = 1;
-    pthread_create (&thread[1], NULL, memif_rx_interrupt, (void *) &thread_data[index + 1]);
-
+    for (i = 0; i < MAX_QUEUES; i++)
+    {
+        err = memif_set_rx_mode (c->conn, MEMIF_RX_MODE_POLLING, i);
+        if (err != MEMIF_ERR_SUCCESS)
+            INFO ("memif_set_rx_mode: %s qid: %u", memif_strerror (err), i);
+        else
+        {
+            ti = (index * MAX_QUEUES) + i;
+            if (thread_data[ti].isRunning)
+            {
+                INFO ("thread id: %d already running!", ti);
+                continue;
+            }
+            thread_data[ti].index = index;
+            thread_data[ti].qid = i;
+            thread_data[ti].id = ti;
+            if ((i % 2) == 0)
+                pthread_create (&thread[ti],
+                        NULL, memif_rx_poll, (void *) &thread_data[ti]);
+            else
+                pthread_create (&thread[ti],
+                        NULL, memif_rx_interrupt, (void *) &thread_data[ti]);
+        }
+        
+    }
     return 0;
 }
 
@@ -518,15 +533,21 @@ int
 on_disconnect (memif_conn_handle_t conn, void *private_ctx)
 {
     void *ptr;
-    memif_connection_t *c = &memif_connection[(*(long *) private_ctx)];
-
+    long index = (*(long *) private_ctx);
+    memif_connection_t *c = &memif_connection[index];
+    int i, ti;
     INFO ("memif disconnected!");
     /* inform thread in polling mode about memif disconenction */
     c->pending_del = 1;
-    pthread_join (thread[0], &ptr);
-    /* send custom sugnal to interrupt thread */
-    pthread_kill (thread[1], SIGUSR1);
-    pthread_join (thread[1], &ptr);
+    for (i = 0; i < MAX_QUEUES; i++)
+    {
+        ti = (index * MAX_QUEUES) + i;
+        if (!thread_data[ti].isRunning)
+            continue;
+        if ((i % 2) != 0)
+            pthread_kill (thread[ti], SIGUSR1); /* interrupt thread in interrupt mode */
+        pthread_join (thread[ti], &ptr);
+    }
     return 0;
 }
 
@@ -658,7 +679,8 @@ icmpr_free ()
     for (i = 0; i < MAX_CONNS; i++)
     {
         memif_connection_t *c = &memif_connection[i];
-        icmpr_memif_delete (i);
+        if (c->conn)
+            icmpr_memif_delete (i);
     }
 
     err = memif_cleanup ();
@@ -864,8 +886,11 @@ int main ()
 
     for (i = 0; i < MAX_CONNS; i++)
     {
+        memif_connection[i].conn = NULL;
         ctx[i] = i;
     }
+
+    memset (&thread_data, 0, sizeof (memif_thread_data_t) * MAX_THREADS);
 
     print_help ();
 

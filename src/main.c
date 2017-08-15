@@ -147,7 +147,7 @@ const char* memif_errlist[ERRLIST_LEN] = { /* MEMIF_ERR_SUCCESS */
 char *
 memif_strerror (int err_code)
 {
-    if (err_code > ERRLIST_LEN)
+    if (err_code >= ERRLIST_LEN)
     {
         strncpy (memif_buf, MEMIF_ERR_UNDEFINED, strlen (MEMIF_ERR_UNDEFINED));
         memif_buf[strlen (MEMIF_ERR_UNDEFINED)] = '\0';
@@ -501,7 +501,7 @@ memif_set_rx_mode (memif_conn_handle_t c, memif_rx_mode_t rx_mode, uint16_t qid)
     memif_connection_t *conn = (memif_connection_t *) c;
     if (conn == NULL)
         return MEMIF_ERR_NOCONN;
-    uint8_t num = (conn->args.is_master) ? conn->args.num_s2m_rings : conn->args.num_m2s_rings;
+    uint8_t num = (conn->args.is_master) ? conn->run_args.num_s2m_rings : conn->run_args.num_m2s_rings;
     if (qid >= num)
         return MEMIF_ERR_QID;
 
@@ -923,7 +923,7 @@ memif_msg_queue_free (memif_msg_queue_elt_t **e)
 
 /* send disconnect msg and close interface */
 int
-memif_disconnect_internal (memif_connection_t *c, uint8_t is_del)
+memif_disconnect_internal (memif_connection_t *c)
 {
     if (c == NULL)
     {
@@ -947,12 +947,10 @@ memif_disconnect_internal (memif_connection_t *c, uint8_t is_del)
     get_list_elt (&e, lm->control_list, lm->control_list_len, c->fd);
     if (e != NULL)
     {
-        if (is_del || c->args.is_master)
+        if (c->args.is_master)
             free_list_elt (lm->control_list, lm->control_list_len, c->fd);
         e->key = c->fd = -1;
     }
-    else if (is_del)
-        free_list_elt_ctx (lm->control_list, lm->control_list_len, c);
 
     if (c->tx_queues != NULL)
     {
@@ -1033,11 +1031,17 @@ memif_delete (memif_conn_handle_t *conn)
     memif_list_elt_t *e = NULL;
     memif_socket_t *ms = NULL;
     
-    int err;
+    int err = MEMIF_ERR_SUCCESS;
 
-    err = memif_disconnect_internal (c, 1);
-    if (err == MEMIF_ERR_NOCONN)
-        return err;
+    if (c->fd > 0)
+    {
+        DBG ("DISCONNECTING");
+        err = memif_disconnect_internal (c);
+        if (err == MEMIF_ERR_NOCONN)
+            return err;
+    }
+
+    free_list_elt_ctx (lm->control_list, lm->control_list_len, c);
 
     if (c->args.is_master)
     {

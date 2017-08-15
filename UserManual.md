@@ -179,8 +179,10 @@ typedef struct
 ```C
 err = memif_rx_burst (c->conn, qid, c->rx_bufs, MAX_MEMIF_BUFS, &rx);
 ```
+
     - User application can then process packets.
     - Api call memif\_buffer\_free will make supplied memif buffers ready for next receive and mark shared memory buffers as free.
+
 ```C
 err = memif_buffer_free (c->conn, qid, c->rx_bufs, rx, &fb);
 ```
@@ -190,8 +192,10 @@ err = memif_buffer_free (c->conn, qid, c->rx_bufs, rx, &fb);
 ```C
 err = memif_buffer_alloc (c->conn, qid, c->tx_bufs, n, &r);
 ```
+
     - User application can populate shared memory buffers with packets.
     - Api call memif\_tx\_burst will inform peer interface (master memif on VPP) that there are packets ready to receive and mark memif buffers as free.
+
 ```C
 err = memif_tx_burst (c->conn, qid, c->tx_bufs, c->tx_buf_num, &r);
 ```

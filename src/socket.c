@@ -778,7 +778,7 @@ memif_conn_fd_error (memif_connection_t *c)
     DBG ("connection fd error");
     strncpy ((char *) c->remote_disconnect_string, "connection fd error",
         19);
-    int err = memif_disconnect_internal (c, 0);
+    int err = memif_disconnect_internal (c);
     return err;
 }
 
@@ -790,7 +790,7 @@ memif_conn_fd_read_ready (memif_connection_t *c)
     err = memif_msg_receive (c->fd);
     if (err != 0)
     {
-        err = memif_disconnect_internal (c, 0);
+        err = memif_disconnect_internal (c);
     }
     return err;
 }

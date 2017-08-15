@@ -211,7 +211,7 @@ int memif_connect1 (memif_connection_t *c);
 /* memory map region, initalize rings and queues */
 int memif_init_regions_and_queues (memif_connection_t *c);
 
-int memif_disconnect_internal (memif_connection_t *c, uint8_t is_del);
+int memif_disconnect_internal (memif_connection_t *c);
 
 /* map errno to memif error code */
 int memif_syscall_error_handler (int err_code);

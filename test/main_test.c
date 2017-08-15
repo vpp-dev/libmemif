@@ -945,7 +945,7 @@ START_TEST (test_disconnect_internal)
     if ((err = memif_init_regions_and_queues (c)) != MEMIF_ERR_SUCCESS)
         ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
 
-    if ((err = memif_disconnect_internal (c, 0)) != MEMIF_ERR_SUCCESS)
+    if ((err = memif_disconnect_internal (c)) != MEMIF_ERR_SUCCESS)
         ck_abort_msg ("err code: %u, err msg: %s", err, memif_strerror (err));
 
     ck_assert_int_eq (c->fd, -1);

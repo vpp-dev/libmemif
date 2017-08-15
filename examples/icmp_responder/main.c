@@ -102,34 +102,26 @@ print_memif_details ()
     ssize_t buflen;
     char *buf;
     int err, i, e;
+    buflen = 2048;
+    buf = malloc (buflen);
     printf ("MEMIF DETAILS\n");
     printf ("==============================\n");
     for (i = 0; i < MAX_CONNS; i++)
     {
         memif_connection_t *c = &memif_connection[i];
-        printf ("interface index: %d\n", i);
 
         memset (&md, 0, sizeof (md));
-        buflen = 2048;
-        buf = malloc (buflen);
         memset (buf, 0, buflen);
 
         err = memif_get_details (c->conn, &md, buf, buflen);
         if (err != MEMIF_ERR_SUCCESS)
         {
-            if (err == MEMIF_ERR_NOCONN)
-            {
-                printf ("\tno connection\n");
-                free (buf);
-                continue;
-            }
-            else
-            {
+            if (err != MEMIF_ERR_NOCONN)
                 INFO ("%s", memif_strerror (err));
-                free (buf);
-                continue;
-            }
+            continue;
         }
+
+        printf ("interface index: %d\n", i);
 
         printf ("\tinterface ip: %u.%u.%u.%u\n",
                     c->ip_addr[0], c->ip_addr[1], c->ip_addr[2], c->ip_addr[3]);
@@ -180,9 +172,8 @@ print_memif_details ()
             printf ("up\n");
         else
             printf ("down\n");
-
-        free (buf);
     }
+    free (buf);
 }
 
 int
@@ -507,7 +498,8 @@ icmpr_free ()
     for (i = 0; i < MAX_CONNS; i++)
     {
         memif_connection_t *c = &memif_connection[i];
-        icmpr_memif_delete (i);
+        if (c->conn)
+            icmpr_memif_delete (i);
     }
 
     err = memif_cleanup ();
@@ -773,6 +765,7 @@ int main ()
 
     for (i = 0; i < MAX_CONNS; i++)
     {
+        memif_connection[i].conn = NULL;
         ctx[i] = i;
     }
     
