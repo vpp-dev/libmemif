@@ -215,7 +215,6 @@ resolve_packet (void *in_pck, ssize_t in_size,
     {
         eah = (struct ether_arp *) (in_pck + *out_size);
         *out_size += resolve_eth_arp (eah, out_pck + *out_size, ip_addr);
-        
     }
     else if (eh->ether_type == 0x0008)
     {

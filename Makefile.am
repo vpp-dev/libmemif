@@ -34,6 +34,7 @@ unit_test_SOURCES = test/unit_test.c \
 unit_test_CPPFLAGS = $(AM_CPPFLAGS) -Itest -Isrc -DMEMIF_UNIT_TEST -g $(CHECK_CFLAGS)
 unit_test_LDADD = $(CHECK_LIBS)
 
+
 #
 # main lib
 #

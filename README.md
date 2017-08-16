@@ -49,6 +49,7 @@ Example application will start in debug mode. Output should look like this:
 ICMP_Responder:add_epoll_fd:204: fd 0 added to epoll
 MEMIF_DEBUG:src/main.c:memif_init:383: app name: ICMP_Responder
 ICMP_Responder:add_epoll_fd:204: fd 4 added to epoll
+
 LIBMEMIF EXAMPLE APP: ICMP_Responder (debug)
 ==============================
 libmemif version: 1.0 (debug)
