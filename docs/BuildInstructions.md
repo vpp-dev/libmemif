@@ -1,4 +1,4 @@
-## Next Steps
+## Build Instructions
 
 Install dependencies
 ```
