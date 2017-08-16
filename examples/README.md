@@ -9,11 +9,8 @@ ligato/libmemif-sample-service image contains built and installed libmemf. To ru
 ```
 Current WORKDIR is set to root repository directory. Example apps can be run from this directory (a script linking binary with library), or browse to ./.libs folder and execute binary directly.
 
-#### Example apps
-
-1. [icmpr](../examples/icmp_responder/main.c)
-> Simplest implementaion. Event polling is handled by libmemif. Single memif conenction in slave mode is created (id 0). Use Ctrl + C to exit app.
-2. [icmpr-epoll](../examples/icmp_responder-epoll/main.c) (run in container by default)
-> Supports multiple connections and master mode. User can create/delete connections, set ip addresses, print connection information. [Example setup](ExampleSetup.md) contains instructions on basic connection use cases setups.
-3. [icmpr-mt](../examples/icmp_responder-mt/main.c)
-> Multi-thread example, very similar to icmpr-epoll. Packets are handled in threads assigned to specific queues. Slave mode only.
+Example app | Description
+------------|------------
+[icmpr](../examples/icmp_responder/main.c) | Simplest implementaion. Event polling is handled by libmemif. Single memif conenction in slave mode is created (id 0). Use Ctrl + C to exit app.
+[icmpr-epoll](../examples/icmp_responder-epoll/main.c) (run in container by default) | Supports multiple connections and master mode. User can create/delete connections, set ip addresses, print connection information. [Example setup](ExampleSetup.md) contains instructions on basic connection use cases setups.
+[icmpr-mt](../examples/icmp_responder-mt/main.c) | Multi-thread example, very similar to icmpr-epoll. Packets are handled in threads assigned to specific queues. Slave mode only.
