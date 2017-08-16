@@ -71,6 +71,6 @@ commands:
 
 #### Next steps
 
-[Examples](examples/README.md)
-[Build instructions](docs/BuildInstructions.md)
-[Getting started](docs/GettingStarted.md)
+- [Build instructions](docs/BuildInstructions.md)
+- [Examples](examples/README.md)
+- [Getting started](docs/GettingStarted.md)
