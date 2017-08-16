@@ -24,11 +24,7 @@ Shared memory packet interface (memif) provides high performance packet transmit
 
 ## Quickstart
 
-For information on how to use libmemif API, please refer to [Getting started](docs/GettingStarted.md).
-
-#### Run in container
-
-Install [docker](https://docs.docker.com/engine/installation) engine.
+This setup will run libmemif ICMP responder example app in container. Install [docker](https://docs.docker.com/engine/installation) engine.
 Useful link: [Docker documentation](https://docs.docker.com/get-started).
 
 Pull image:
@@ -67,10 +63,10 @@ commands:
 	rx-mode <index> <qid> <polling|interrupt> - set queue rx mode
 ```
 
-[Example setup](examples/ExampleSetup.md) contains instructions on how to set up conenction between icmpr-epoll example app and VPP-memif.
+Continue with [Example setup](examples/ExampleSetup.md) which contains instructions on how to set up conenction between icmpr-epoll example app and VPP-memif.
 
 #### Next steps
 
-- [Build instructions](docs/BuildInstructions.md)
-- [Examples](examples/README.md)
-- [Getting started](docs/GettingStarted.md)
+- [Build instructions](docs/BuildInstructions.md) Instructions on how to build/install libmemif.
+- [Examples](examples/README.md) More example apps presenting different features.
+- [Getting started](docs/GettingStarted.md) Introduction to libmemif API. Explaining library usage in custom app.
