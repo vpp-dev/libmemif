@@ -35,6 +35,8 @@
 
 #define memif_min(a,b) ((a < b) ? (a) : (b))
 
+#define APP_NAME "ICMP_Responder"
+
 /* sends msg to socket */
 static_fn int
 memif_msg_send (int fd, memif_msg_t *msg, int afd)
@@ -99,8 +101,9 @@ memif_msg_enq_ack (memif_connection_t *c)
 }
 
 static_fn int
-memif_msg_send_hello (memif_connection_t *c)
+memif_msg_send_hello (int fd)
 {
+    libmemif_main_t *lm = &libmemif_main;
     memif_msg_t msg = { 0 };
     memif_msg_hello_t *h = &msg.hello;
     msg.type = MEMIF_MSG_TYPE_HELLO;
@@ -111,12 +114,12 @@ memif_msg_send_hello (memif_connection_t *c)
     h->max_region = MEMIF_MAX_REGION;
     h->max_log2_ring_size = MEMIF_MAX_LOG2_RING_SIZE;
 
-    strncpy ((char *) h->name, (char *) c->args.instance_name,
-            strlen ((char *) c->args.instance_name));
+    strncpy ((char *) h->name, lm->app_name,
+            strlen (lm->app_name));
 
     /* msg hello is not enqueued but sent directly,
          because it is the first msg to be sent */
-    return memif_msg_send (c->fd, &msg, -1);
+    return memif_msg_send (fd, &msg, -1);
 }
 
 /* send id and secret (optional) for interface identification */
@@ -164,8 +167,8 @@ memif_msg_enq_init (memif_connection_t *c)
 static_fn int
 memif_msg_enq_add_region (memif_connection_t *c, uint8_t region_index)
 {
-    /* TODO: support multiple regions */
-    memif_region_t *mr = c->regions;
+    /* maybe check if region is valid? */
+    memif_region_t *mr = &c->regions[region_index];
 
     memif_msg_queue_elt_t *e =
         (memif_msg_queue_elt_t *) malloc (sizeof (memif_msg_queue_elt_t));
@@ -214,14 +217,14 @@ memif_msg_enq_add_ring (memif_connection_t *c, uint8_t index, uint8_t dir)
     /* TODO: support multiple rings */
     memif_queue_t *mq;
     if (dir == MEMIF_RING_M2S)
-        mq = c->rx_queues;
+        mq = &c->rx_queues[index];
     else
-        mq = c->tx_queues;
+        mq = &c->tx_queues[index];
 
     e->fd = mq->int_fd;
     ar->index = index;
     ar->offset = mq->offset;
-    ar->region = index;
+    ar->region = mq->region;
     ar->log2_ring_size = mq->log2_ring_size;
     ar->flags = (dir == MEMIF_RING_S2M) ? MEMIF_MSG_ADD_RING_FLAG_S2M : 0;
 
@@ -314,7 +317,7 @@ memif_msg_enq_connected (memif_connection_t *c)
     /* specifie protocol for disconnect msg err_code
        so that it will be compatible with VPP? (header/doc) */
 int
-memif_msg_send_disconnect (memif_connection_t *c, uint8_t *err_string, uint32_t err_code)
+memif_msg_send_disconnect (int fd, uint8_t *err_string, uint32_t err_code)
 {
     memif_msg_t msg = { 0 };
     memif_msg_disconnect_t *d = &msg.disconnect;
@@ -329,7 +332,7 @@ memif_msg_send_disconnect (memif_connection_t *c, uint8_t *err_string, uint32_t 
     }
     strncpy ((char *) d->string,  (char *) err_string, l);
 
-    return memif_msg_send (c->fd, &msg, -1);
+    return memif_msg_send (fd, &msg, -1);
 }
 
 static_fn int
@@ -343,15 +346,14 @@ memif_msg_receive_hello (memif_connection_t *c, memif_msg_t *msg)
         DBG ("incompatible protocol version");
         return MEMIF_ERR_PROTO;
     }
-    /* use nested struct c->run containing following variables?
-        (this would be used to adjust shared memory information while keeping
-        configured values intact) */
-    c->args.num_s2m_rings = memif_min (h->max_s2m_ring + 1,
+
+    c->run_args.num_s2m_rings = memif_min (h->max_s2m_ring + 1,
                                     c->args.num_s2m_rings);
-    c->args.num_m2s_rings = memif_min (h->max_m2s_ring + 1,
+    c->run_args.num_m2s_rings = memif_min (h->max_m2s_ring + 1,
                                     c->args.num_m2s_rings);
-    c->args.log2_ring_size = memif_min (h->max_log2_ring_size,
+    c->run_args.log2_ring_size = memif_min (h->max_log2_ring_size,
                                         c->args.log2_ring_size);
+    c->run_args.buffer_size = c->args.buffer_size;
     strncpy ((char *) c->remote_name, (char *) h->name, strlen ((char *) h->name));
 
     return MEMIF_ERR_SUCCESS; /* 0 */
@@ -359,10 +361,15 @@ memif_msg_receive_hello (memif_connection_t *c, memif_msg_t *msg)
 
 /* handle interface identification (id, secret (optional)) */
 static_fn int
-memif_msg_receive_init (memif_connection_t *c, memif_msg_t *msg)
+memif_msg_receive_init (memif_socket_t *ms, int fd, memif_msg_t *msg)
 {
     memif_msg_init_t *i = &msg->init;
+    memif_list_elt_t *elt = NULL;
+    memif_list_elt_t elt2;
+    memif_connection_t *c = NULL;
+    libmemif_main_t *lm = &libmemif_main;
     uint8_t err_string[96];
+    memset (err_string, 0, sizeof (char) * 96);
     int err = MEMIF_ERR_SUCCESS; /* 0 */
     int err_disc;
     if (i->version != MEMIF_VERSION)
@@ -372,7 +379,9 @@ memif_msg_receive_init (memif_connection_t *c, memif_msg_t *msg)
         err = MEMIF_ERR_PROTO;
         goto error;
     }
-    if (c->args.interface_id != i->id)
+
+    get_list_elt (&elt, ms->interface_list, ms->interface_list_len, i->id);
+    if (elt == NULL)
     {
         DBG ("MEMIF_ID_ERR");
         strncpy ((char *) err_string, MEMIF_ID_ERR, strlen (MEMIF_ID_ERR));
@@ -380,6 +389,7 @@ memif_msg_receive_init (memif_connection_t *c, memif_msg_t *msg)
         goto error;
     }
 
+    c = (memif_connection_t *) elt->data_struct;
 
     if (!(c->args.is_master))
     {
@@ -395,6 +405,9 @@ memif_msg_receive_init (memif_connection_t *c, memif_msg_t *msg)
         err = MEMIF_ERR_ALRCONN;
         goto error;
     }
+
+    c->fd = fd;
+
     if (i->mode != c->args.mode)
     {
         DBG ("MEMIF_MODE_ERR");
@@ -439,15 +452,24 @@ memif_msg_receive_init (memif_connection_t *c, memif_msg_t *msg)
         }     
     }
 
+    c->read_fn = memif_conn_fd_read_ready;
+    c->write_fn = memif_conn_fd_write_ready;
+    c->error_fn = memif_conn_fd_error;
+
+    elt2.key = c->fd;
+    elt2.data_struct = c;
+
+    add_list_elt (&elt2, &lm->control_list, &lm->control_list_len);
+    free_list_elt (lm->pending_list, lm->pending_list_len, fd);
+
     return err;
 
 error:
-    if (c->fd != -1)
-    {
-        err_disc = memif_msg_send_disconnect (c, err_string, 1);
-        if (err_disc != 0)
-            return err_disc;
-    }
+    memif_msg_send_disconnect (fd, err_string, 0);
+    lm->control_fd_update (fd, MEMIF_FD_EVENT_DEL);
+    free_list_elt (lm->pending_list, lm->pending_list_len, fd);
+    close (fd);
+    fd = -1;
     return err;
 }
 
@@ -463,15 +485,13 @@ memif_msg_receive_add_region (memif_connection_t *c, memif_msg_t *msg, int fd)
     if (ar->index > MEMIF_MAX_REGION)
         return MEMIF_ERR_MAXREG;
 
-    mr = (memif_region_t *) malloc (sizeof (memif_region_t ));
+    mr = (memif_region_t *) realloc (c->regions, sizeof (memif_region_t) * (ar->index + 1));
     if (mr == NULL)
         return memif_syscall_error_handler (errno);
-    mr->fd = fd;
-    mr->region_size = ar->size;
-    mr->shm = NULL;
-
-    /* TODO: support multiple regions */
     c->regions = mr;
+    c->regions[ar->index].fd = fd;
+    c->regions[ar->index].region_size = ar->size;
+    c->regions[ar->index].shm = NULL;
 
     return MEMIF_ERR_SUCCESS; /* 0 */
 }
@@ -492,33 +512,35 @@ memif_msg_receive_add_ring (memif_connection_t *c, memif_msg_t *msg, int fd)
     {
         if (ar->index > MEMIF_MAX_S2M_RING)
             return MEMIF_ERR_MAXRING;
+        if (ar->index >= c->args.num_s2m_rings)
+            return MEMIF_ERR_MAXRING;
 
-        mq = (memif_queue_t *) malloc (sizeof (memif_queue_t));
-        mq->int_fd = fd;
-        mq->log2_ring_size = ar->log2_ring_size;
-        mq->region = ar->region;
-        mq->offset = ar->offset;
-
-        /* TODO: support multiple rings */
+        mq = (memif_queue_t *) realloc (c->rx_queues, sizeof (memif_queue_t) * (ar->index + 1));
+        if (mq == NULL)
+            return memif_syscall_error_handler (errno);
         c->rx_queues = mq;
-        c->args.num_s2m_rings++;
+        c->rx_queues[ar->index].int_fd = fd;
+        c->rx_queues[ar->index].log2_ring_size = ar->log2_ring_size;
+        c->rx_queues[ar->index].region = ar->region;
+        c->rx_queues[ar->index].offset = ar->offset;
+        c->run_args.num_s2m_rings++;
     }
     else
     {
         if (ar->index > MEMIF_MAX_M2S_RING)
             return MEMIF_ERR_MAXRING;
+        if (ar->index >= c->args.num_m2s_rings)
+            return MEMIF_ERR_MAXRING;
 
-        mq = (memif_queue_t *) malloc (sizeof (memif_queue_t));
+        mq = (memif_queue_t *) realloc (c->tx_queues, sizeof (memif_queue_t) * (ar->index + 1));
         if (mq == NULL)
             return memif_syscall_error_handler (errno);
-        mq->int_fd = fd;
-        mq->log2_ring_size = ar->log2_ring_size;
-        mq->region = ar->region;
-        mq->offset = ar->offset;
-
-        /* TODO: support multiple rings */
         c->tx_queues = mq;
-        c->args.num_m2s_rings++;
+        c->tx_queues[ar->index].int_fd = fd;
+        c->tx_queues[ar->index].log2_ring_size = ar->log2_ring_size;
+        c->tx_queues[ar->index].region = ar->region;
+        c->tx_queues[ar->index].offset = ar->offset;
+        c->run_args.num_m2s_rings++;
     }
 
     return MEMIF_ERR_SUCCESS; /* 0 */
@@ -529,13 +551,29 @@ static_fn int
 memif_msg_receive_connect (memif_connection_t *c, memif_msg_t *msg)
 {
     memif_msg_connect_t *cm = &msg->connect;
+    libmemif_main_t *lm = &libmemif_main;
+    memif_list_elt_t elt;
 
     int err;
     err = memif_connect1 (c);
-    if (err != MEMIF_ERR_SUCCESS) /* 0 */
+    if (err != MEMIF_ERR_SUCCESS)
         return err;
 
     strncpy ((char *) c->remote_if_name, (char *) cm->if_name, strlen ((char *) cm->if_name));
+
+    int i;
+    if (c->on_interrupt != NULL)
+    {
+        for (i = 0; i < c->run_args.num_m2s_rings; i++)
+        {
+            elt.key = c->rx_queues[i].int_fd;
+            elt.data_struct = c;
+            add_list_elt (&elt, &lm->interrupt_list, &lm->interrupt_list_len);
+
+            lm->control_fd_update (c->rx_queues[i].int_fd, MEMIF_FD_EVENT_READ);
+        }
+
+    }
 
     c->on_connect ((void *) c, c->private_ctx);
 
@@ -547,13 +585,21 @@ static_fn int
 memif_msg_receive_connected (memif_connection_t *c, memif_msg_t *msg)
 {
     memif_msg_connect_t *cm = &msg->connect;
+    libmemif_main_t *lm = &libmemif_main;
 
     int err;
     err = memif_connect1 (c);
-    if (err != MEMIF_ERR_SUCCESS) /* 0 */
+    if (err != MEMIF_ERR_SUCCESS)
         return err;
 
     strncpy ((char *) c->remote_if_name, (char *) cm->if_name, strlen ((char *) cm->if_name));
+
+    int i;
+    if (c->on_interrupt != NULL)
+    {
+        for (i = 0; i < c->run_args.num_s2m_rings; i++)
+            lm->control_fd_update (c->rx_queues[i].int_fd, MEMIF_FD_EVENT_READ);
+    }
 
     c->on_connect ((void *) c, c->private_ctx);
 
@@ -565,6 +611,7 @@ memif_msg_receive_disconnect (memif_connection_t *c, memif_msg_t *msg)
 {
     memif_msg_disconnect_t *d = &msg->disconnect;
 
+    memset (c->remote_disconnect_string, 0, sizeof (c->remote_disconnect_string));
     strncpy ((char *) c->remote_disconnect_string, (char *) d->string,
         strlen ((char *) d->string));
 
@@ -575,7 +622,7 @@ memif_msg_receive_disconnect (memif_connection_t *c, memif_msg_t *msg)
 }
 
 static_fn int
-memif_msg_receive (memif_connection_t *c)
+memif_msg_receive (int ifd)
 {
     char ctl[CMSG_SPACE (sizeof (int)) +
              CMSG_SPACE (sizeof (struct ucred))] = { 0 };
@@ -585,7 +632,11 @@ memif_msg_receive (memif_connection_t *c)
     ssize_t size;
     int err = MEMIF_ERR_SUCCESS; /* 0 */
     int fd = -1;
-    int i = 0;
+    int i;
+    libmemif_main_t *lm = &libmemif_main;
+    memif_connection_t *c = NULL;
+    memif_socket_t *ms = NULL;
+    memif_list_elt_t *elt = NULL;
     
     iov[0].iov_base = (void *) &msg;
     iov[0].iov_len = sizeof (memif_msg_t);
@@ -594,7 +645,9 @@ memif_msg_receive (memif_connection_t *c)
     mh.msg_control = ctl;
     mh.msg_controllen = sizeof (ctl);
 
-    size = recvmsg (c->fd, &mh, 0);
+    DBG ("recvmsg fd %d", ifd);
+    size = recvmsg (ifd, &mh, 0);
+    DBG ("done");
     if (size != sizeof (memif_msg_t))
     {
         if (size == 0)
@@ -626,6 +679,10 @@ memif_msg_receive (memif_connection_t *c)
 
     DBG ("Message type %u received", msg.type);
 
+    get_list_elt (&elt, lm->control_list, lm->control_list_len, ifd);
+    if (elt != NULL)
+        c = (memif_connection_t *) elt->data_struct;
+
     switch (msg.type)
     {
         case MEMIF_MSG_TYPE_ACK:
@@ -640,21 +697,34 @@ memif_msg_receive (memif_connection_t *c)
                 return err;
             if ((err = memif_msg_enq_add_region (c, 0)) != MEMIF_ERR_SUCCESS)
                 return err;
-            /* TODO: support multiple rings */
-            if ((err = memif_msg_enq_add_ring (c, i, MEMIF_RING_S2M)) != MEMIF_ERR_SUCCESS)
-                return err;
-            if ((err = memif_msg_enq_add_ring (c, i, MEMIF_RING_M2S)) != MEMIF_ERR_SUCCESS)
-                return err;
+            for (i = 0; i < c->run_args.num_s2m_rings; i++)
+            {
+                if ((err = memif_msg_enq_add_ring (c, i, MEMIF_RING_S2M)) != MEMIF_ERR_SUCCESS)
+                    return err;
+            }
+            for (i = 0; i < c->run_args.num_m2s_rings; i++)
+            {
+                if ((err = memif_msg_enq_add_ring (c, i, MEMIF_RING_M2S)) != MEMIF_ERR_SUCCESS)
+                    return err;
+            }
             if ((err = memif_msg_enq_connect (c)) != MEMIF_ERR_SUCCESS)
                 return err;
             break;
 
         case MEMIF_MSG_TYPE_INIT:
-            if ((err = memif_msg_receive_init (c, &msg)) != MEMIF_ERR_SUCCESS)
+            get_list_elt (&elt, lm->pending_list, lm->pending_list_len, ifd);
+            if (elt == NULL)
+                return -1;
+            ms = (memif_socket_t *) elt->data_struct;
+            if ((err = memif_msg_receive_init (ms, ifd, &msg)) != MEMIF_ERR_SUCCESS)
                 return err;
             /* c->remote_pid = cr->pid */
             /* c->remote_uid = cr->uid */
             /* c->remote_gid = cr->gid */
+            get_list_elt (&elt, lm->control_list, lm->control_list_len, ifd);
+            if (elt == NULL)
+                return -1;
+            c = (memif_connection_t *) elt->data_struct;
             if ((err = memif_msg_enq_ack (c)) != MEMIF_ERR_SUCCESS)
                 return err;
             break;
@@ -676,7 +746,7 @@ memif_msg_receive (memif_connection_t *c)
         case MEMIF_MSG_TYPE_CONNECT:
             if ((err = memif_msg_receive_connect (c, &msg)) != MEMIF_ERR_SUCCESS)
                 return err;
-            if ((err = memif_msg_enq_ack (c)) != MEMIF_ERR_SUCCESS)
+            if ((err = memif_msg_enq_connected (c)) != MEMIF_ERR_SUCCESS)
                 return err;
             break;
 
@@ -695,7 +765,8 @@ memif_msg_receive (memif_connection_t *c)
             break;
     }
 
-    c->flags |= MEMIF_CONNECTION_FLAG_WRITE;
+    if (c != NULL)
+        c->flags |= MEMIF_CONNECTION_FLAG_WRITE;
 /*    libmemif_main_t *lm = &libmemif_main;
     lm->control_fd_update (c->fd, MEMIF_FD_EVENT_READ | MEMIF_FD_EVENT_MOD); */
     return MEMIF_ERR_SUCCESS; /* 0 */
@@ -716,7 +787,7 @@ int
 memif_conn_fd_read_ready (memif_connection_t *c)
 {
     int err;
-    err = memif_msg_receive (c);
+    err = memif_msg_receive (c->fd);
     if (err != 0)
     {
         err = memif_disconnect_internal (c);
@@ -756,28 +827,41 @@ done:
 }
 
 int
-memif_conn_fd_accept_ready (memif_connection_t *c)
+memif_conn_fd_accept_ready (memif_socket_t *ms)
 {
     int addr_len;
     struct sockaddr_un client;
     int conn_fd;
+    libmemif_main_t *lm = &libmemif_main;
 
     DBG ("accept called");
 
     addr_len = sizeof (client);
-    conn_fd = accept (c->fd, (struct sockaddr *) &client, (socklen_t *) &addr_len);
+    conn_fd = accept (ms->fd, (struct sockaddr *) &client, (socklen_t *) &addr_len);
 
     if (conn_fd < 0)
     {
         return memif_syscall_error_handler (errno);
     }
-    DBG ("accept fd %d", c->fd);
+    DBG ("accept fd %d", ms->fd);
     DBG ("conn fd %d", conn_fd);
 
-    c->read_fn = memif_conn_fd_read_ready;
-    c->write_fn = memif_conn_fd_write_ready;
-    c->error_fn = memif_conn_fd_error;
-    c->fd = conn_fd;
+    memif_list_elt_t elt;
+    elt.key = conn_fd;
+    elt.data_struct = ms;
 
-    return memif_msg_send_hello (c);
+    add_list_elt (&elt, &lm->pending_list, &lm->pending_list_len);
+    lm->control_fd_update (conn_fd, MEMIF_FD_EVENT_READ | MEMIF_FD_EVENT_WRITE);
+
+    return memif_msg_send_hello (conn_fd);
+}
+
+int
+memif_read_ready (int fd)
+{
+    int err;
+    DBG ("call recv");
+    err = memif_msg_receive (fd);
+    DBG ("recv finished");
+    return err;
 }

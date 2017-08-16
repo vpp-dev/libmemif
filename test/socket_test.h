@@ -19,9 +19,7 @@
 #define _SOCKET_TEST_H_
 
 #include <unit_test.h>
-#include <memif_private.h>
-#include <socket.h>
 
-int test_socket (uint16_t *success, uint16_t *fail);
+Suite * socket_suite ();
 
 #endif /* _SOCKET_TEST_H_ */

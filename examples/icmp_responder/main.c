@@ -69,25 +69,14 @@
 /* maximum tx/rx memif buffers */
 #define MAX_MEMIF_BUFS 256
 
-int epfd;
-
-/*
- * WIP
- */
-/* interrupt fd specific for queue */
-typedef struct
-{
-    uint16_t qid;
-    int fd;
-} int_fd_t;
 
 typedef struct
 {
     uint16_t index;
     /* memif conenction handle */
     memif_conn_handle_t conn;
-    /* interrupt file descriptor (specific for each queue) */
-    int_fd_t *int_fd;
+    /* transmit queue id */
+    uint16_t tx_qid;
     /* tx buffers */
     memif_buffer_t *tx_bufs;
     /* allocated tx buffers counter */
@@ -98,9 +87,12 @@ typedef struct
     /* allcoated rx buffers counter */
     /* number of rx buffers pointing to shared memory */
     uint16_t rx_buf_num;
+    /* interface ip address */
+    uint8_t ip_addr[4];
 } memif_connection_t;
 
 memif_connection_t memif_connection;
+int epfd;
 
 static void
 print_memif_details ()
@@ -115,7 +107,7 @@ print_memif_details ()
     ssize_t buflen = 2048;
     char *buf = malloc (buflen);
     memset (buf, 0, buflen);
-    int err;
+    int err, e;
 
     err = memif_get_details (c->conn, &md, buf, buflen);
     if (err != MEMIF_ERR_SUCCESS)
@@ -154,12 +146,22 @@ print_memif_details ()
         default:
             printf ("unknown\n");
             break;
-    }
     printf ("\tsocket filename: %s\n",(char *) md.socket_filename);
-    printf ("\tring_size: %u\n", md.ring_size);
-    printf ("\tbuffer_size: %u\n", md.buffer_size);
-    printf ("\trx queues: %u\n", md.rx_queues);
-    printf ("\ttx queues: %u\n", md.tx_queues);
+    printf ("\tsocket filename: %s\n",(char *) md.socket_filename);
+    printf ("\trx queues:\n");
+    for (e = 0; e < md.rx_queues_num; e++)
+    {
+        printf ("\t\tqueue id: %u\n", md.rx_queues[e].qid);
+        printf ("\t\tring size: %u\n", md.rx_queues[e].ring_size);
+        printf ("\t\tbuffer size: %u\n", md.rx_queues[e].buffer_size);
+    }
+    printf ("\ttx queues:\n");
+    for (e = 0; e < md.tx_queues_num; e++)
+    {
+        printf ("\t\tqueue id: %u\n", md.tx_queues[e].qid);
+        printf ("\t\tring size: %u\n", md.tx_queues[e].ring_size);
+        printf ("\t\tbuffer size: %u\n", md.tx_queues[e].buffer_size);
+    }
     printf ("\tlink: ");
     if (md.link_up_down)
         printf ("up\n");
@@ -168,83 +170,13 @@ print_memif_details ()
 
     free (buf);
 }
-
-int
-add_epoll_fd (int fd, uint32_t events)
-{
-    if (fd < 0)
-    {
-        DBG ("invalid fd %d", fd);
-        return -1;
-    }
-    struct epoll_event evt;
-    memset (&evt, 0, sizeof (evt));
-    evt.events = events;
-    evt.data.fd = fd;
-    if (epoll_ctl (epfd, EPOLL_CTL_ADD, fd, &evt) < 0)
-    {
-        DBG ("epoll_ctl: %s fd %d", strerror (errno), fd);
-        return -1;
-    }
-    DBG ("fd %d added to epoll", fd);
-    return 0;
-}
-
-int
-mod_epoll_fd (int fd, uint32_t events)
-{
-    if (fd < 0)
-    {
-        DBG ("invalid fd %d", fd);
-        return -1;
-    }
-    struct epoll_event evt;
-    memset (&evt, 0, sizeof (evt));
-    evt.events = events;
-    evt.data.fd = fd;
-    if (epoll_ctl (epfd, EPOLL_CTL_MOD, fd, &evt) < 0)
-    {
-        DBG ("epoll_ctl: %s fd %d", strerror (errno), fd);
-        return -1;
-    }
-    DBG ("fd %d moddified on epoll", fd);
-    return 0;
-}
-
-int
-del_epoll_fd (int fd)
-{
-    if (fd < 0)
-    {
-        DBG ("invalid fd %d", fd);
-        return -1;
-    }
-    struct epoll_event evt;
-    memset (&evt, 0, sizeof (evt));
-    if (epoll_ctl (epfd, EPOLL_CTL_DEL, fd, &evt) < 0)
-    {
-        DBG ("epoll_ctl: %s fd %d", strerror (errno), fd);
-        return -1;
-    }
-    DBG ("fd %d removed from epoll", fd);
-    return 0;
-}
-
 /* informs user about connected status. private_ctx is used by user to identify connection
     (multiple connections WIP) */
 int
 on_connect (memif_conn_handle_t conn, void *private_ctx)
 {
-    memif_connection_t *c = &memif_connection;
     INFO ("memif connected!");
-    int err;
-    uint16_t qid = 0;
-    /* get interrupt file descriptor for queue specified by qid */
-    err = memif_get_queue_efd (c->conn, qid, &c->int_fd->fd);
-    INFO ("memif_get_queue_efd: %s", memif_strerror (err));
-    c->int_fd->qid = 0;
-    /* add interrupt fd to epoll */
-    return add_epoll_fd (c->int_fd->fd, EPOLLIN);
+    return 0;
 }
 
 /* informs user about disconnected status. private_ctx is used by user to identify connection
@@ -256,61 +188,14 @@ on_disconnect (memif_conn_handle_t conn, void *private_ctx)
     return 0;
 }
 
-/* user needs to watch new fd or stop watching fd that is about to be closed.
-    control fd will be modified during connection establishment to minimize CPU usage */
-int
-control_fd_update (int fd, uint8_t events)
-{
-    /* convert memif event definitions to epoll events */
-    if (events & MEMIF_FD_EVENT_DEL)
-        return del_epoll_fd (fd);
-
-    uint32_t evt = 0;
-    if (events & MEMIF_FD_EVENT_READ)
-        evt |= EPOLLIN;
-    if (events & MEMIF_FD_EVENT_WRITE)
-        evt |= EPOLLOUT;
-
-    if (events & MEMIF_FD_EVENT_MOD)
-        return mod_epoll_fd (fd, evt);
-
-    return add_epoll_fd (fd, evt);
-}
-
-int
-icmpr_memif_create (int is_master)
-{
-    /* setting memif connection arguments */
-    memif_conn_args_t args;
-    int fd = -1;
-    memset (&args, 0, sizeof (args));
-    args.is_master = is_master;
-    args.log2_ring_size = 10;
-    args.buffer_size = 2048;
-    args.num_s2m_rings = 1;
-    args.num_m2s_rings = 1;
-    strncpy ((char *) args.interface_name, IF_NAME, strlen (IF_NAME));
-    strncpy ((char *) args.instance_name, APP_NAME, strlen (APP_NAME));
-    args.mode = 0;
-    /* socket filename is not specified, because this app is supposed to
-         connect to VPP over memif. so default socket filename will be used */
-    /* default socketfile = /run/vpp/memif.sock */
-
-    args.interface_id = 0;
-    /* last argument for memif_create (void * private_ctx) is used by user
-       to identify connection. this context is returned with callbacks */
-    int err = memif_create (&(&memif_connection)->conn, &args, on_connect, on_disconnect, NULL);
-    INFO ("memif_create: %s", memif_strerror (err));
-    return 0;
-}
-
 int
 icmpr_memif_delete ()
 {
     int err;
     /* disconenct then delete memif connection */
     err = memif_delete (&(&memif_connection)->conn);
-    INFO ("memif_delete: %s", memif_strerror (err));
+    if (err != MEMIF_ERR_SUCCESS)
+        INFO ("memif_delete: %s", memif_strerror (err));
     return 0;
 }
 
@@ -329,38 +214,39 @@ print_help ()
 #endif
     printf ("\n");
     printf ("memif version: %d\n", MEMIF_VERSION);
-    printf ("commands:\n");
-    printf ("\thelp - prints this help\n");
-    printf ("\texit - exit app\n");
-    printf ("\tconn - create memif (slave-mode)\n");
-    printf ("\tdel  - delete memif\n");
-    printf ("\tshow - show connection details\n");
+    printf ("\tuse CTRL+C to exit\n");
 }
 
 int
-icmpr_buffer_alloc (long n)
+icmpr_buffer_alloc (long n, uint16_t qid)
 {
     memif_connection_t *c = &memif_connection;
     int err;
-    uint16_t r, qid = 0;
+    uint16_t r;
     /* set data pointer to shared memory and set buffer_len to shared mmeory buffer len */
     err = memif_buffer_alloc (c->conn, qid, c->tx_bufs, n, &r);
-    INFO ("memif_buffer_alloc: %s", memif_strerror (err));
+    if (err != MEMIF_ERR_SUCCESS)
+    {
+        INFO ("memif_buffer_alloc: %s", memif_strerror (err));
+        c->tx_buf_num += r;
+        return -1;
+    }
     c->tx_buf_num += r;
     DBG ("allocated %d/%ld buffers, %u free buffers", r, n, MAX_MEMIF_BUFS - c->tx_buf_num);
     return 0;
 }
 
 int
-icmpr_tx_burst ()
+icmpr_tx_burst (uint16_t qid)
 {
     memif_connection_t *c = &memif_connection;
     int err;
-    uint16_t r, qid = 0;
+    uint16_t r;
     /* inform peer memif interface about data in shared memory buffers */
     /* mark memif buffers as free */
     err = memif_tx_burst (c->conn, qid, c->tx_bufs, c->tx_buf_num, &r);
-    INFO ("memif_tx_burst: %s", memif_strerror (err));
+    if (err != MEMIF_ERR_SUCCESS)
+        INFO ("memif_tx_burst: %s", memif_strerror (err));
     DBG ("tx: %d/%u", r, c->tx_buf_num);
     c->tx_buf_num -= r;
     return 0;
@@ -370,195 +256,152 @@ int
 icmpr_free ()
 {
     /* application cleanup */
+    int err;
     memif_connection_t *c = &memif_connection;
-    free (c->int_fd);
-    c->int_fd = NULL;
     free (c->tx_bufs);
     c->tx_bufs = NULL;
     free (c->rx_bufs);
     c->rx_bufs = NULL;
 
+    err = memif_cleanup ();
+    if (err != MEMIF_ERR_SUCCESS)
+        INFO ("memif_delete: %s", memif_strerror (err));
+  
     return 0;
 }
 
-int
-user_input_handler ()
+void
+icmpr_exit (int sig)
 {
-    char *in = (char *) malloc (256);
-    char *ui = fgets (in, 256, stdin);
-    if (in[0] == '\n')
-        goto done;
-    ui = strtok (in, " ");
-    if (strncmp (ui, "exit", 4) == 0)
-    {
-        free (in);
-        icmpr_memif_delete ();
-        icmpr_free ();
-        exit (EXIT_SUCCESS);
-    }
-    else if (strncmp (ui, "help", 4) == 0)
-    {
-        print_help ();
-        goto done;
-    }
-    else if (strncmp (ui, "conn", 4) == 0)
-    {
-        icmpr_memif_create (0);
-        goto done;
-    }
-    else if (strncmp (ui, "del", 3) == 0)
-    {
-        icmpr_memif_delete ();
-        goto done;
-    }
-    else if (strncmp (ui, "show", 4) == 0)
-    {
-        print_memif_details ();
-        goto done;
-    }
-    else
-    {
-        DBG ("unknown command: %s", ui);
-        goto done;
-    }
-
-    return 0;
-done:
-    free (in);
-    return 0;
+    printf ("\n");
+    icmpr_memif_delete ();
+    icmpr_free ();
+    exit (EXIT_SUCCESS);
 }
 
+/* called when event is polled on interrupt file descriptor.
+    there are packets in shared memory ready to be received */
 int
-icmpr_interrupt (int fd)
+on_interrupt (memif_conn_handle_t conn, void *private_ctx, uint16_t qid)
 {
+    DBG ("interrupted");
     memif_connection_t *c = &memif_connection;
     int err;
     uint16_t rx;
     /* receive data from shared memory buffers */
-    err = memif_rx_burst (c->conn, 0, c->rx_bufs, MAX_MEMIF_BUFS, &rx);
-    INFO ("memif_rx_burst: %s", memif_strerror (err));
+    err = memif_rx_burst (c->conn, qid, c->rx_bufs, MAX_MEMIF_BUFS, &rx);
     c->rx_buf_num += rx;
 
     DBG ("received %d buffers. %u/%u alloc/free buffers",
                 rx, c->rx_buf_num, MAX_MEMIF_BUFS - c->rx_buf_num);
 
-    icmpr_buffer_alloc (rx);
+    if (icmpr_buffer_alloc (rx, c->tx_qid) < 0)
+    {
+        INFO ("buffer_alloc error");
+        goto error;
+    }
     int i;
     for (i = 0; i < rx; i++)
     {
         resolve_packet ((void *) (c->rx_bufs + i)->data,
                             (c->rx_bufs + i)->data_len, (void *) (c->tx_bufs + i)->data,
-                            &(c->tx_bufs + i)->data_len);
+                            &(c->tx_bufs + i)->data_len, c->ip_addr);
     }
 
     uint16_t fb;
     /* mark memif buffers and shared memory buffers as free */
-    err = memif_buffer_free (c->conn, 0, c->rx_bufs, rx, &fb);
-    INFO ("memif_buffer_free: %s", memif_strerror (err));
+    err = memif_buffer_free (c->conn, qid, c->rx_bufs, rx, &fb);
     c->rx_buf_num -= fb;
 
     DBG ("freed %d buffers. %u/%u alloc/free buffers",
                 fb, c->rx_buf_num, MAX_MEMIF_BUFS - c->rx_buf_num);
 
-    icmpr_tx_burst ();
+    icmpr_tx_burst (c->tx_qid);
 
+    return 0;
+
+error:
+    err = memif_buffer_free (c->conn, qid, c->rx_bufs, rx, &fb);
+    if (err != MEMIF_ERR_SUCCESS)
+        INFO ("memif_buffer_free: %s", memif_strerror (err));
+    c->rx_buf_num -= fb;
+    DBG ("freed %d buffers. %u/%u alloc/free buffers",
+                fb, c->rx_buf_num, MAX_MEMIF_BUFS - c->rx_buf_num);
     return 0;
 }
 
 int
-poll_event (int timeout)
+icmpr_memif_create (int is_master)
 {
-    memif_connection_t *c = &memif_connection;
-    struct epoll_event evt, *e;
-    int app_err = 0, memif_err = 0, en = 0;
-    int tmp, nfd;
-    uint32_t events = 0;
-    memset (&evt, 0, sizeof (evt));
-    evt.events = EPOLLIN | EPOLLOUT;
-    sigset_t sigset;
-    sigemptyset (&sigset);
-    en = epoll_pwait (epfd, &evt, 1, timeout, &sigset);
-    if (en < 0)
-    {
-        DBG ("epoll_pwait: %s", strerror (errno));
-        return -1;
-    }
-    if (en > 0)
-    {
-    /* this app does not use any other file descriptors than stds and memif control fds */
-        if ( evt.data.fd > 2)
-        {
-            /* event on memif interrupt fd */
-            if (evt.data.fd == c->int_fd->fd)
-            {
-                /* WIP */
-                /* in future patch there will be one handler and callback on interrupt */
-                icmpr_interrupt (evt.data.fd);
-            }
-            else
-            {
-                /* event of memif control fd */
-                /* convert epolle events to memif events */
-                if (evt.events & EPOLLIN)
-                    events |= MEMIF_FD_EVENT_READ;
-                if (evt.events & EPOLLOUT)
-                    events |= MEMIF_FD_EVENT_WRITE;
-                if (evt.events & EPOLLERR)
-                    events |= MEMIF_FD_EVENT_ERROR;
-                memif_err = memif_control_fd_handler (evt.data.fd, events);
-                INFO ("memif_control_fd_handler: %s", memif_strerror (memif_err));
-            }
-        }
-        else if (evt.data.fd == 0)
-        {
-            app_err = user_input_handler ();
-        }
-        else
-        {
-            DBG ("unexpected event at memif_epfd. fd %d", evt.data.fd);
-        }
-    }
+    /* setting memif connection arguments */
+    memif_conn_args_t args;
+    int fd = -1;
+    memset (&args, 0, sizeof (args));
+    args.is_master = is_master;
+    args.log2_ring_size = 10;
+    args.buffer_size = 2048;
+    args.num_s2m_rings = 2;
+    args.num_m2s_rings = 2;
+    strncpy ((char *) args.interface_name, IF_NAME, strlen (IF_NAME));
+    strncpy ((char *) args.instance_name, APP_NAME, strlen (APP_NAME));
+    args.mode = 0;
+    /* socket filename is not specified, because this app is supposed to
+         connect to VPP over memif. so default socket filename will be used */
+    /* default socketfile = /run/vpp/memif.sock */
 
-    if ((app_err < 0) || (memif_err < 0))
-    {
-        if (app_err < 0)
-            DBG ("user input handler error");
-        if (memif_err < 0)
-            DBG ("memif control fd handler error");
-        return -1;
-    }
-
+    args.interface_id = 0;
+    /* last argument for memif_create (void * private_ctx) is used by user
+       to identify connection. this context is returned with callbacks */
+    int err = memif_create (&(&memif_connection)->conn,
+                    &args, on_connect, on_disconnect, on_interrupt, NULL);
+    if (err != MEMIF_ERR_SUCCESS)
+        INFO ("memif_create: %s", memif_strerror (err));
     return 0;
 }
 
-int main ()
+int main (int argc, char *argv[])
 {
-    epfd = epoll_create (1);
-    add_epoll_fd (0, EPOLLIN);
-
     memif_connection_t *c = &memif_connection;
+
+    signal (SIGINT, icmpr_exit);
 
     /* initialize global memif connection handle */
     c->conn = NULL;
-    c->int_fd = malloc (sizeof (int_fd_t));
-    c->int_fd->fd = -1;
+    if (argc == 1)
+        c->tx_qid = 0;
+    else
+    {
+        char *end;
+        c->tx_qid = strtol (argv[1], &end, 10);
+    }
+    INFO ("tx qid: %u", c->tx_qid);
     /* alloc memif buffers */
     c->rx_buf_num = 0;
     c->rx_bufs = (memif_buffer_t *) malloc (sizeof (memif_buffer_t) * MAX_MEMIF_BUFS);
     c->tx_buf_num = 0;
     c->tx_bufs = (memif_buffer_t *) malloc (sizeof (memif_buffer_t) * MAX_MEMIF_BUFS);
-
+    c->ip_addr[0] = 192;
+    c->ip_addr[1] = 168;
+    c->ip_addr[2] = 1;
+    c->ip_addr[3] = 2;
     /* initialize memory interface */
     int err;
-    err = memif_init (control_fd_update);
-    INFO ("memif_init: %s", memif_strerror (err));
+    /* if valid callback is passed as argument, fd event polling will be done by user
+        all file descriptors and events will be passed to user in this callback */
+    /* if callback is set to NULL libmemif will handle fd event polling */
+    err = memif_init (NULL, APP_NAME);
+    if (err != MEMIF_ERR_SUCCESS)
+        INFO ("memif_init: %s", memif_strerror (err));
 
     print_help ();
+
+    icmpr_memif_create (0);
+    print_memif_details ();
 
     /* main loop */
     while (1)
     {
-        if (poll_event (-1) < 0)
+        if (memif_poll_event (-1) < 0)
         {
             DBG ("poll_event error!");
         }

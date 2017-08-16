@@ -2,126 +2,72 @@ Shared Memory Packet Interface (memif) Library
 ==============================================
 ## Introduction
 
-Shared memory packet interface (memif) provides high performance packet transmit and receive between user application and Vector Packet Processing (VPP). 
+Shared memory packet interface (memif) provides high performance packet transmit and receive between user application and Vector Packet Processing (VPP) or multiple user applications. Using libmemif, user application can create shared memory interface in master or slave mode and connect to VPP or another application using libmemif. Once the connection is established, user application can receive or transmit packets using libmemif API.
 
-## Work in progress
+![Architecture](docs/architecture.png)
+
+## Features
 
 - [x] Slave mode
   - [x] Connect to VPP over memif
   - [x] ICMP responder example app
 - [x] Transmit/receive packets
 - [x] Interrupt mode support
-- [ ] File descriptor event polling in libmemif (optional)
-  - [ ] Simplify file descriptor event polling (one handler for control and interrupt channel)
-- [ ] Multiple connections
-- [ ] Multiple regions
-- [ ] Multipe queues
-  - [ ] Multithread support
-- [ ] Master mode
-- [ ] Performance testing
-- [ ] Documentation
+- [x] File descriptor event polling in libmemif (optional)
+  - [x] Simplify file descriptor event polling (one handler for control and interrupt channel)
+- [x] Multiple connections
+- [x] Multiple queues
+  - [x] Multi-thread support
+- [x] Master mode
+	- [ ] Multiple regions (TODO)
+- [ ] Performance testing (TODO)
 
+## Quickstart
 
-## Getting started
+This setup will run libmemif ICMP responder example app in container. Install [docker](https://docs.docker.com/engine/installation) engine.
+Useful link: [Docker documentation](https://docs.docker.com/get-started).
 
-#### Instalation
+Pull image:
+```
+# docker pull ligato/libmemif-sample-service
+```
 
-Clone repository to your local machine. From root directory execute:
+Now you should be able to see ligato/libmemif-sample-service image on your local machine (IMAGE ID in this README may be outdated):
+```
+# docker images
+REPOSITORY                       TAG                 IMAGE ID            CREATED              SIZE
+ligato/libmemif-sample-service   latest              32ecc2f9d013        About a minute ago   468MB
+...
+```
 
-For debug build:
+Run container:
 ```
-# ./bootstrap
-# ./configure
-# make
-# make install
+# docker run -it --rm --name icmp-responder --hostname icmp-responder --privileged -v "/run/vpp/:/run/vpp/" ligato/libmemif-sample-service
 ```
-    
-For release build:
+Example application will start in debug mode. Output should look like this:
 ```
-# ./bootstrap
-# ./configure
-# make release
-# make install
-```
-Verify installation:
-```
-# ./.libs/icmp_responder
-```
-> Make sure to run the binary file from ./.libs. File ./icmp\_responder in libmemif root directory is script that links the library, so it only verifies succesfull build. Default install path is /usr/lib.
-Use _help_ command to display build information and commands:
-```
+ICMP_Responder:add_epoll_fd:204: fd 0 added to epoll
+MEMIF_DEBUG:src/main.c:memif_init:383: app name: ICMP_Responder
+ICMP_Responder:add_epoll_fd:204: fd 4 added to epoll
+
 LIBMEMIF EXAMPLE APP: ICMP_Responder (debug)
 ==============================
 libmemif version: 1.0 (debug)
 memif version: 256
 commands:
-    help - prints this help
-    exit - exit app
-    conn - create memif (slave-mode)
-    del  - delete memif
-    show - show connection details
+	help - prints this help
+	exit - exit app
+	conn <index> - create memif (slave-mode)
+	del  <index> - delete memif
+	show - show connection details
+	ip-set <index> <ip-addr> - set interface ip address
+	rx-mode <index> <qid> <polling|interrupt> - set queue rx mode
 ```
 
-#### Connecting to VPP
+Continue with [Example setup](examples/ExampleSetup.md) which contains instructions on how to set up conenction between icmpr-epoll example app and VPP-memif.
 
-For detailed information on api calls and structures please refer to [libmemif.h](src/libmemif.h)
+#### Next steps
 
-1. Initialize memif
-   - Declare callback function handling file descriptor event polling. memif\_control\_fd\_update\_t
-   - Call memif initialization function. memif_init
-   
-> If event occures on any file descriptor returned by this callback, call memif\_control\_fd\_handler function.
-    
-> Mmeif initialization function will initialize internal structures and create timer file descriptor, which will be used for sending periodic connection requests. Timer is disarmed if no memif interface is created.
- 
-2. Creating interface
-   - Declare memif conenction handle. memif\_conn\_handle\_t
-   - Specify connection arguments. memif\_conn\_args\_t
-   - Declare callback functions called on connected/disconencted status changed. memif\_connection\_update\_t
-   - Call memif interface create function. memif\_create
-> Arms timer file descriptor.
-
-3. Connection establishment
-    - User application will poll events on all file descriptors returned in memif\_control\_fd\_update\_t callback..
-    - On event call memif\_control\_fd\_handler.
-    - Everything else regarding connection establishment will be done internally.
-    - Once connection has been established, a callback will inform the user about connection status change.
-
-4. Interrupt packet receive
-   - Interrupt mode is still Work In Progress and will be simplified in furure patch.
-   - For interrupt mode, user application is required to register interrupt file descriptor for event polling. Api call memif\_get\_queue\_efd will return this interrupt file descriptor.
-     - If event occures on this file descriptor, there are packets in shared memory to be received.
-
-6. Memif buffers
-    - Packet data are stored in memif\_buffer\_t. Pointer _data_ points to shared memory buffer, and unsigned integer *data\_len* contains packet data length.
-
-5. Packet receive
-    - Api call memif\_rx\_burst will set all required fields in memif buffers provided by user application.
-    - User application can then process packets.
-    - Api call memif\_buffer\_free will make supplied memif buffers ready for next receive and mark shared memory buffers as free.
-
-6. Packet transmit
-    - Api call memif\_buffer\_alloc will set all required fields in memif buffers provided by user application. 
-    - User application can populate shared memory buffers with packets.
-    - Api call memif\_tx\_burst will inform peer interface (master memif on VPP) that there are packets ready to receive and mark memif buffers as free.
-
-7. Helper functions
-    - Memif details
-      - Api call memif\_get\_details will return details about connection.
-    - Memif error messages
-      - Every api call returns error code (integer value) maped to error string.
-      - Call memif\_strerror will return error message assigned to specific error code.
-        - Not all syscall errors are translated to memif error codes. If error code 1 (MEMIF\_ERR\_SYSCALL) is returned then libmemif needs to be compiled with -DMEMIF_DBG flag to print error message. Use _make -B_ to rebuild libmemif in debug mode.
-    
-
-#### Example app:
-
-- [ICMP Responder](examples/icmp_responder/main.c)
-
-VPP side config:
-```
-# create memif id 0 master
-# set int state memif0 up
-# set int ip address memif0 192.168.1.1/24
-# ping 192.168.1.2
-```
+- [Build instructions](docs/BuildInstructions.md) Instructions on how to build/install libmemif.
+- [Examples](examples/README.md) More example apps presenting different features.
+- [Getting started](docs/GettingStarted.md) Introduction to libmemif API. Explaining library usage in custom app.

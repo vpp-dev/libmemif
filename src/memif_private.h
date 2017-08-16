@@ -37,8 +37,8 @@
 #define MEMIF_DEFAULT_TX_QUEUES 1
 #define MEMIF_DEFAULT_BUFFER_SIZE 2048
 
-#define MEMIF_MAX_M2S_RING		1
-#define MEMIF_MAX_S2M_RING		1
+#define MEMIF_MAX_M2S_RING		255
+#define MEMIF_MAX_S2M_RING		255
 #define MEMIF_MAX_REGION		255
 #define MEMIF_MAX_LOG2_RING_SIZE	14
 
@@ -78,36 +78,6 @@
 
 #endif /* MEMIF_DBG */
 
-#if 0
-
-typedef enum
-{
-    MEMIF_ERR_SUCCESS = 0,          /* success */
-/* SYSCALL ERRORS */
-    MEMIF_ERR_SYSCALL,              /* other syscall error */
-    MEMIF_ERR_ACCES,                /* permission denied */
-    MEMIF_ERR_FILE_LIMIT,           /* system open file limit */
-    MEMIF_ERR_PROC_FILE_LIMIT,      /* process open file limit */
-    MEMIF_ERR_ALREADY,              /* connection already requested */
-    MEMIF_ERR_AGAIN,                /* fd is not socket, or operation would block */
-    MEMIF_ERR_BAD_FD,               /* invalid fd */
-    MEMIF_ERR_NOMEM,                /* out of memory */
-/* LIBMEMIF ERRORS */
-    MEMIF_ERR_INVAL_ARG,            /* invalid argument */
-    MEMIF_ERR_NOCONN,               /* handle points to no connection */
-    MEMIF_ERR_CONN,                 /* handle points to existing connection */
-    MEMIF_ERR_CB_FDUPDATE,          /* user defined callback memif_control_fd_update_t error */
-    MEMIF_ERR_FILE_NOT_SOCK,        /* file specified by socket filename 
-                                       exists, but it's not socket */
-    MEMIF_ERR_NO_SHMFD,             /* missing shm fd */
-    MEMIF_ERR_COOKIE,               /* wrong cookie on ring */
-    MEMIF_ERR_NOBUF_RING,           /* ring buffer full */
-    MEMIF_ERR_NOBUF,                /* not enough memif buffers */
-    MEMIF_ERR_INT_WRITE,            /* send interrupt error */
-} memif_err_t;
-
-#endif /* 0 */
-
 typedef struct
 {
     void *shm;
@@ -145,15 +115,27 @@ typedef struct memif_connection memif_connection_t;
 /* functions called by memif_control_fd_handler */
 typedef int (memif_fn) (memif_connection_t *conn);
 
+typedef struct
+{
+    uint8_t num_s2m_rings;
+    uint8_t num_m2s_rings;
+    uint16_t buffer_size;
+    memif_log2_ring_size_t log2_ring_size;
+} memif_conn_run_args_t;
+
 typedef struct memif_connection
 {
+    uint16_t index;
     memif_conn_args_t args;
+    memif_conn_run_args_t run_args;
 
     int fd;
+    int listener_fd;
 
     memif_fn *write_fn, *read_fn, *error_fn;
 
     memif_connection_update_t *on_connect, *on_disconnect;
+    memif_interrupt_t *on_interrupt;
     void *private_ctx;
 
     /* connection message queue */
@@ -177,28 +159,49 @@ typedef struct memif_connection
  */
 typedef struct
 {
+    int key; /* fd or id */
+    void *data_struct;
+} memif_list_elt_t;
+
+/*
+ * WIP
+ */
+typedef struct
+{
     int fd;
     uint16_t use_count;
     uint8_t *filename;
+    uint16_t interface_list_len;
+    memif_list_elt_t *interface_list; /* memif master interfaces listening on this socket */
 } memif_socket_t;
 
 /*
  * WIP
  */ 
-/* probably function like memif_cleanup () will need to be called
-    close timerfd, free struct libmemif_main and its nested structures */
+/* probably function like memif_cleanup () will need to be called to close timerfd */
 typedef struct
 {
     memif_control_fd_update_t *control_fd_update;
     int timerfd;
     struct itimerspec arm, disarm;
+    uint16_t disconn_slaves;
+    uint8_t *app_name;
 
-    /* TODO: update to arrays support multiple connections */
+    /* master implementation... */
     memif_socket_t ms;
-    memif_connection_t *conn;
+
+    uint16_t control_list_len;
+    uint16_t interrupt_list_len;
+    uint16_t listener_list_len;
+    uint16_t pending_list_len;
+    memif_list_elt_t *control_list;
+    memif_list_elt_t *interrupt_list;
+    memif_list_elt_t *listener_list;
+    memif_list_elt_t *pending_list;
 } libmemif_main_t;
 
 extern libmemif_main_t libmemif_main;
+extern int memif_epfd;
 
 /* main.c */
 
@@ -212,6 +215,12 @@ int memif_disconnect_internal (memif_connection_t *c);
 
 /* map errno to memif error code */
 int memif_syscall_error_handler (int err_code);
+
+int add_list_elt (memif_list_elt_t *e, memif_list_elt_t **list, uint16_t *len);
+
+int get_list_elt (memif_list_elt_t **e, memif_list_elt_t *list, uint16_t len, int key);
+
+int free_list_elt (memif_list_elt_t *list, uint16_t len, int key);
 
 #ifndef __NR_memfd_create
 #if defined __x86_64__
