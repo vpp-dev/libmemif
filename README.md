@@ -2,7 +2,9 @@ Shared Memory Packet Interface (memif) Library
 ==============================================
 ## Introduction
 
-Shared memory packet interface (memif) provides high performance packet transmit and receive between user application and Vector Packet Processing (VPP).
+Shared memory packet interface (memif) provides high performance packet transmit and receive between user application and Vector Packet Processing (VPP) or multiple user applications. Using libmemif, user application can create shared memory interface in master or slave mode and connect to VPP or another application using libmemif. Once the connection is established, user application can receive or transmit packets using libmemif API.
+
+![Architecture](docs/architecture.png)
 
 ## Features
 
@@ -22,7 +24,7 @@ Shared memory packet interface (memif) provides high performance packet transmit
 
 ## Quickstart
 
-For information on how to use libmemif API, please refer to [Getting started](GettingStarted.md).
+For information on how to use libmemif API, please refer to [Getting started](docs/GettingStarted.md).
 
 #### Run in container
 
@@ -65,20 +67,8 @@ commands:
 	rx-mode <index> <qid> <polling|interrupt> - set queue rx mode
 ```
 
-[Example setup](ExampleSetup.md) contains instructions on how to set up conenction between icmpr-epoll example app and VPP-memif.
+[Example setup](examples/ExampleSetup.md) contains instructions on how to set up conenction between icmpr-epoll example app and VPP-memif. Brief description and instructions on how to run other example apps can be found in [Examples readme](examples/README.md)
 
-This image contains more example apps. To run different examples, override docker CMD to start container in bash:
-```
-# docker run -it --entrypoint=/bin/bash -i --rm --name icmp-responder --hostname icmp-responder --privileged -v "/run/vpp/:/run/vpp/" ligato/libmemif-sample-service
-```
-Current WORKDIR is root repository directory. Example apps can be run from this directory (a script linking binary with library), or browse to ./.libs folder and execute binary directly. Example apps:
-1. icmpr
-> Simplest implementaion. Event polling is handled by libmemif. Single memif conenction in slave mode is created (id 0). Use Ctrl + C to exit app.
-2. icmpr-epoll (run in container by default)
-> Supports multiple connections and master mode. User can create/delete connections, set ip addresses, print connection information.
-3. icmpr-mt
-> Multi-thread example, very similar to icmpr-epoll. Packets are handled in threads assigned to specific queues. Slave mode only.
+#### Next steps
 
-#### Build from source
-
-Build process is explained in [Build Instructions](BuildInstructions.md).
+Continue to [Next steps](docs/NextSteps.md).

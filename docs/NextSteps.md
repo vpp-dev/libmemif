@@ -1,4 +1,4 @@
-## Build Instructions
+## Next Steps
 
 Install dependencies
 ```
@@ -49,3 +49,6 @@ commands:
 	ip-set <index> <ip-addr> - set interface ip address
 	rx-mode <index> <qid> <polling|interrupt> - set queue rx mode
 ```
+#### Examples
+
+Once the library is build/installed, refer to [Examples](../examples/README.md) and [Getting started](GettingStarted.md) for additional information on basic use cases and API usage.

@@ -5,7 +5,7 @@
 > Libmemif example app(s) use memif default socket file: /run/vpp/memif.sock.
 
 Run VPP and icmpr-epoll example (default example when running in container).
-> Other examples work similar to icmpr-epoll. Brief explanation can be found in [Readme](README.md).
+> Other examples work similar to icmpr-epoll. Brief explanation can be found in [Examples readme](README.md) file.
 
 VPP-side config:
 ```
@@ -183,3 +183,24 @@ DBGvpp# ping 192.168.1.2
 
 Statistics: 5 sent, 4 received, 20% packet loss
 ```
+
+#### icmp_responder master icmp_responder slave
+
+> Example apps can only repond to ping. This setup creates connection between two applications using libmemif. Traffic functionality is the same as when connection to VPP. App can receive ARP/ICMP request and transmit response, but can not send ARP/ICMP request.
+
+Run two instances of icmpr-epoll example.
+> If not running in container, make sure folder /run/vpp/ exists before creating memif master.
+Instance 1 will be in master mode, instance 2 in slave mode.
+instance 1:
+```
+conn 0 1
+```
+instance 2:
+```
+conn 0 0
+```
+In 2 seconds, both instances should print connected! message:
+```
+INFO: memif connected!
+```
+Check peer interface names using show command.
