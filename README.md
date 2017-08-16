@@ -67,8 +67,10 @@ commands:
 	rx-mode <index> <qid> <polling|interrupt> - set queue rx mode
 ```
 
-[Example setup](examples/ExampleSetup.md) contains instructions on how to set up conenction between icmpr-epoll example app and VPP-memif. Brief description and instructions on how to run other example apps can be found in [Examples readme](examples/README.md)
+[Example setup](examples/ExampleSetup.md) contains instructions on how to set up conenction between icmpr-epoll example app and VPP-memif.
 
 #### Next steps
 
-Continue to [Next steps](docs/NextSteps.md).
+[Examples](examples/README.md)
+[Build instructions](docs/BuildInstructions.md)
+[Getting started](docs/GettingStarted.md)
