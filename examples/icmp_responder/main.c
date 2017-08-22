@@ -69,7 +69,6 @@
 /* maximum tx/rx memif buffers */
 #define MAX_MEMIF_BUFS 256
 
-
 typedef struct
 {
     uint16_t index;
@@ -146,6 +145,7 @@ print_memif_details ()
         default:
             printf ("unknown\n");
             break;
+    }
     printf ("\tsocket filename: %s\n",(char *) md.socket_filename);
     printf ("\tsocket filename: %s\n",(char *) md.socket_filename);
     printf ("\trx queues:\n");
@@ -266,7 +266,7 @@ icmpr_free ()
     err = memif_cleanup ();
     if (err != MEMIF_ERR_SUCCESS)
         INFO ("memif_delete: %s", memif_strerror (err));
-  
+
     return 0;
 }
 
