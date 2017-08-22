@@ -386,105 +386,11 @@ free_list_elt_ctx (memif_list_elt_t *list, uint16_t len, memif_connection_t *ctx
     return -1;
 }
 
-static char memif_buf[MAX_ERRBUF_LEN];
-
-const char* memif_errlist[ERRLIST_LEN] = { /* MEMIF_ERR_SUCCESS */
-    "Success.",
-                             /* MEMIF_ERR_SYSCALL */ 
-    "Unspecified syscall error (build with -DMEMIF_DBG or make debug).",
-                            /* MEMIF_ERR_ACCES */
-    "Permission to resoure denied.",
-                            /* MEMIF_ERR_FILE_LIMIT */
-    "System limit on total numer of open files reached.",
-                            /* MEMIF_ERR_PROC_FILE_LIMIT */
-    "Per-process limit on total number of open files reached.",
-                            /* MEMIF_ERR_ALREADY */
-    "Connection already requested.",
-                            /* MEMIF_ERR_AGAIN */
-    "File descriptor refers to file other than socket, or operation would block.",
-                            /* MEMIF_ERR_BAD_FD */
-    "Bad file descriptor.",
-                            /* MEMIF_ERR_NOMEM */
-    "Out of memory.",
-                            /* MEMIF_ERR_INVAL_ARG */
-    "Invalid argument.",
-                            /* MEMIF_ERR_NOCONN */
-    "Memif connection handle does not point to existing conenction",
-                            /* MEMIF_ERR_CONN */
-    "Memif connection handle points to existing connection",
-                            /* MEMIF_ERR_CB_FDUPDATE */
-    "User defined callback memif_control_fd_update_t returned error",
-                            /* MEMIF_ERR_FILE_NOT_SOCK */
-    "File specified by socket filename exists and is not socket.",
-                            /* MEMIF_ERR_NO_SHMFD */
-    "Missing shared memory file descriptor. (internal error)",
-                            /* MEMIF_ERR_COOKIE */
-    "Invalid cookie on ring. (internal error)",
-                            /* MEMIF_ERR_NOBUF_RING */
-    "Ring buffer full.",
-                            /* MEMIF_ERR_NOBUF */
-    "Not enough memif buffers. There are unreceived data in shared memory.",
-                            /* MEMIF_ERR_NOBUF_DET */
-    "Not enough space for memif details in suplied buffer. String data might be malformed.",
-                            /* MEMIF_ERR_INT_WRITE */
-    "Send interrupt error.",
-                            /* MEMIF_ERR_MFMSG */
-    "Malformed message received on control channel.",
-                            /* MEMIF_ERR_PROTO */
-    "Incompatible memory interface protocol version.",
-                            /* MEMIF_ERR_ID */
-    "Unmatched interface id.",
-                            /* MEMIF_ERR_ACCSLAVE */
-    "Slave cannot accept connection reqest.",
-                            /* MEMIF_ERR_ALRCONN */
-    "Interface is already connected.",
-                            /* MEMIF_ERR_MODE */
-    "Mode mismatch.",
-                            /* MEMIF_ERR_SECRET */
-    "Secret mismatch.",
-                            /* MEMIF_ERR_NOSECRET */
-    "Secret required.",
-                            /* MEMIF_ERR_MAXREG */
-    "Limit on total number of regions reached.",
-                            /* MEMIF_ERR_MAXRING */
-    "Limit on total number of ring reached.",
-                            /* MEMIF_ERR_NO_INTFD */
-    "Missing interrupt file descriptor. (internal error)",
-                            /* MEMIF_ERR_DISCONNECT */
-    "Interface received disconnect request.",
-                            /* MEMIF_ERR_DISCONNECTED */
-    "Interface is disconnected.",
-                            /* MEMIF_ERR_UNKNOWN_MSG */
-    "Unknown message type received on control channel. (internal error)"
- };
-
-#define MEMIF_ERR_UNDEFINED "undefined error"
-
-char *
-memif_strerror (int err_code)
-{
-    if (err_code > ERRLIST_LEN)
-    {
-        strncpy (memif_buf, MEMIF_ERR_UNDEFINED, strlen (MEMIF_ERR_UNDEFINED));
-        memif_buf[strlen (MEMIF_ERR_UNDEFINED)] = '\0';
-    }
-    else
-    {
-        strncpy (memif_buf, memif_errlist[err_code], strlen (memif_errlist[err_code]));
-        memif_buf[strlen (memif_errlist[err_code])] = '\0';
-    }
-    return memif_buf;
-}
-
-#define DBG_TX_BUF (0)
-#define DBG_RX_BUF (1)
-
-#if MEMIF_DBG_SHM
 static void
 memif_control_fd_update_register (memif_control_fd_update_t *cb)
 {
     libmemif_main_t *lm = &libmemif_main;
-    lm->control_fd_update = cb;+
+    lm->control_fd_update = cb;
 }
 
 int memif_init (memif_control_fd_update_t *on_control_fd_update, char *app_name)
@@ -816,7 +722,6 @@ memif_create (memif_conn_handle_t *c, memif_conn_args_t *args,
         if ((index = add_list_elt (&list_elt, &lm->control_list, &lm->control_list_len)) < 0)
         {
             err = MEMIF_ERR_NOMEM;
-
             goto error;
         }
     }
@@ -843,7 +748,6 @@ memif_control_fd_handler (int fd, uint8_t events)
     int i, rv, sockfd = -1, err = MEMIF_ERR_SUCCESS; /* 0 */
     uint16_t num;
     memif_list_elt_t *e = NULL;
-
     memif_connection_t *conn;
     libmemif_main_t *lm = &libmemif_main;
     if (fd == lm->timerfd)
@@ -1003,14 +907,7 @@ memif_poll_event (int timeout)
         err = memif_control_fd_handler (evt.data.fd, events);
         return err;
     }
-
-    return MEMIF_ERR_SUCCESS; /* 0 */
-
-error:
-    if (sockfd > 0)
-        close (sockfd);
-    sockfd = -1;
-    return err;
+    return 0;
 }
 
 static void
@@ -1197,7 +1094,6 @@ int
 memif_connect1 (memif_connection_t *c)
 {
     libmemif_main_t *lm = &libmemif_main;
-
     memif_region_t *mr = c->regions;
     memif_queue_t *mq;
     int i;
@@ -1279,12 +1175,10 @@ memif_init_regions_and_queues (memif_connection_t *conn)
     
     if ((r->fd = memfd_create ("memif region 0", MFD_ALLOW_SEALING)) == -1)
         return memif_syscall_error_handler (errno);
-
 /*
     if ((fcntl (r->fd, F_ADD_SEALS, F_SEAL_SHRINK)) == -1)
         return memif_syscall_error_handler (errno);
 */
-
     if ((ftruncate (r->fd, r->region_size)) == -1)
         return memif_syscall_error_handler (errno);
 
@@ -1602,6 +1496,7 @@ memif_rx_burst (memif_conn_handle_t conn, uint16_t qid,
     uint16_t mask = (1 << mq->log2_ring_size) - 1;
     memif_buffer_t *b0, *b1;
     *rx = 0;
+    
     uint64_t b;
     ssize_t r = read (mq->int_fd, &b, sizeof (b));
     if ((r == -1) && (errno != EAGAIN))
@@ -1680,7 +1575,6 @@ memif_get_details (memif_conn_handle_t conn, memif_details_t *md,
         return MEMIF_ERR_NOCONN;
 
     int err = MEMIF_ERR_SUCCESS, i;
-
     ssize_t l0, l1, total_l;
     l0 = 0;
 

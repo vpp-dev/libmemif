@@ -134,6 +134,7 @@ typedef int (memif_interrupt_t) (memif_conn_handle_t conn, void *private_ctx, ui
  *
  * @{
  */
+
 /** \brief Memif connection arguments
     @param socket_filename - socket filename
     @param secret - otional parameter used as interface autenthication
@@ -359,12 +360,12 @@ int memif_create (memif_conn_handle_t * conn, memif_conn_args_t * args,
         
     \return memif_err_t
 
-
 */
 int memif_control_fd_handler (int fd, uint8_t events);
 
 /** \brief Memif delete
     @param conn - pointer to memif connection handle
+
 
     disconnect session (free queues and regions, close file descriptors, unmap shared memory)
     set connection handle to NULL, to avoid possible double free
@@ -391,6 +392,7 @@ int memif_buffer_alloc (memif_conn_handle_t conn, uint16_t qid,
     @param bufs - memif buffers
     @param count - number of memif buffers to free
     @param count_out - returns number of freed buffers
+
     \return memif_err_t
 */
 int memif_buffer_free (memif_conn_handle_t conn, uint16_t qid,
