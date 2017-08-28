@@ -35,8 +35,6 @@
 
 #define memif_min(a,b) ((a < b) ? (a) : (b))
 
-#define APP_NAME "ICMP_Responder"
-
 /* sends msg to socket */
 static_fn int
 memif_msg_send (int fd, memif_msg_t *msg, int afd)
