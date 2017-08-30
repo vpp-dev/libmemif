@@ -21,6 +21,12 @@ AM_CPPFLAGS = -g -DMEMIF_DBG -DICMP_DBG
 release:
 	$(MAKE) AM_CPPFLAGS="-O3"
 
+.PHONY: doc
+doc:
+	@echo Building doxygen documentation...
+	doxygen doxygen.conf
+	@echo Doxygen documentation built in docs directory.
+
 #
 # unit_test
 #
