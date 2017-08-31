@@ -1027,6 +1027,11 @@ int
 memif_delete (memif_conn_handle_t *conn)
 {
     memif_connection_t *c = (memif_connection_t *) *conn;
+    if (c == NULL)
+    {
+        DBG ("no connection");
+        return MEMIF_ERR_NOCONN;
+    }
     libmemif_main_t *lm = &libmemif_main;
     memif_list_elt_t *e = NULL;
     memif_socket_t *ms = NULL;
