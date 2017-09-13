@@ -32,47 +32,47 @@
 /*! Error codes */
 typedef enum
 {
-    MEMIF_ERR_SUCCESS = 0,          /*!< success */
+  MEMIF_ERR_SUCCESS = 0,	/*!< success */
 /* SYSCALL ERRORS */
-    MEMIF_ERR_SYSCALL,              /*!< other syscall error */
-    MEMIF_ERR_ACCES,                /*!< permission denied */
-    MEMIF_ERR_NO_FILE,              /*!< file does not exist */
-    MEMIF_ERR_FILE_LIMIT,           /*!< system open file limit */
-    MEMIF_ERR_PROC_FILE_LIMIT,      /*!< process open file limit */
-    MEMIF_ERR_ALREADY,              /*!< connection already requested */
-    MEMIF_ERR_AGAIN,                /*!< fd is not socket, or operation would block */
-    MEMIF_ERR_BAD_FD,               /*!< invalid fd */
-    MEMIF_ERR_NOMEM,                /*!< out of memory */
+  MEMIF_ERR_SYSCALL,		/*!< other syscall error */
+  MEMIF_ERR_ACCES,		/*!< permission denied */
+  MEMIF_ERR_NO_FILE,		/*!< file does not exist */
+  MEMIF_ERR_FILE_LIMIT,		/*!< system open file limit */
+  MEMIF_ERR_PROC_FILE_LIMIT,	/*!< process open file limit */
+  MEMIF_ERR_ALREADY,		/*!< connection already requested */
+  MEMIF_ERR_AGAIN,		/*!< fd is not socket, or operation would block */
+  MEMIF_ERR_BAD_FD,		/*!< invalid fd */
+  MEMIF_ERR_NOMEM,		/*!< out of memory */
 /* LIBMEMIF ERRORS */
-    MEMIF_ERR_INVAL_ARG,            /*!< invalid argument */
-    MEMIF_ERR_NOCONN,               /*!< handle points to no connection */
-    MEMIF_ERR_CONN,                 /*!< handle points to existing connection */
-    MEMIF_ERR_CB_FDUPDATE,          /*!< user defined callback memif_control_fd_update_t error */
-    MEMIF_ERR_FILE_NOT_SOCK,        /*!< file specified by socket filename 
-                                       exists, but it's not socket */
-    MEMIF_ERR_NO_SHMFD,             /*!< missing shm fd */
-    MEMIF_ERR_COOKIE,               /*!< wrong cookie on ring */
-    MEMIF_ERR_NOBUF_RING,           /*!< ring buffer full */
-    MEMIF_ERR_NOBUF,                /*!< not enough memif buffers */
-    MEMIF_ERR_NOBUF_DET,            /*!< memif details needs larger buffer */
-    MEMIF_ERR_INT_WRITE,            /*!< send interrupt error */
-    MEMIF_ERR_MFMSG,                /*!< malformed msg received */
-    MEMIF_ERR_QID,                  /*!< invalid queue id */
+  MEMIF_ERR_INVAL_ARG,		/*!< invalid argument */
+  MEMIF_ERR_NOCONN,		/*!< handle points to no connection */
+  MEMIF_ERR_CONN,		/*!< handle points to existing connection */
+  MEMIF_ERR_CB_FDUPDATE,	/*!< user defined callback memif_control_fd_update_t error */
+  MEMIF_ERR_FILE_NOT_SOCK,	/*!< file specified by socket filename 
+				   exists, but it's not socket */
+  MEMIF_ERR_NO_SHMFD,		/*!< missing shm fd */
+  MEMIF_ERR_COOKIE,		/*!< wrong cookie on ring */
+  MEMIF_ERR_NOBUF_RING,		/*!< ring buffer full */
+  MEMIF_ERR_NOBUF,		/*!< not enough memif buffers */
+  MEMIF_ERR_NOBUF_DET,		/*!< memif details needs larger buffer */
+  MEMIF_ERR_INT_WRITE,		/*!< send interrupt error */
+  MEMIF_ERR_MFMSG,		/*!< malformed msg received */
+  MEMIF_ERR_QID,		/*!< invalid queue id */
 /* MEMIF PROTO ERRORS */
-    MEMIF_ERR_PROTO,                /*!< incompatible protocol version */
-    MEMIF_ERR_ID,                   /*!< unmatched interface id */
-    MEMIF_ERR_ACCSLAVE,             /*!< slave cannot accept connection requests */
-    MEMIF_ERR_ALRCONN,              /*!< memif is already connected */
-    MEMIF_ERR_MODE,                 /*!< mode mismatch */
-    MEMIF_ERR_SECRET,               /*!< secret mismatch */
-    MEMIF_ERR_NOSECRET,             /*!< secret required */
-    MEMIF_ERR_MAXREG,               /*!< max region limit reached */
-    MEMIF_ERR_MAXRING,              /*!< max ring limit reached */
-    MEMIF_ERR_NO_INTFD,             /*!< missing interrupt fd */
-    MEMIF_ERR_DISCONNECT,           /*!< disconenct received */
-    MEMIF_ERR_DISCONNECTED,         /*!< peer interface disconnected */
-    MEMIF_ERR_UNKNOWN_MSG,          /*!< unknown message type */
-} memif_err_t;                                                                                   
+  MEMIF_ERR_PROTO,		/*!< incompatible protocol version */
+  MEMIF_ERR_ID,			/*!< unmatched interface id */
+  MEMIF_ERR_ACCSLAVE,		/*!< slave cannot accept connection requests */
+  MEMIF_ERR_ALRCONN,		/*!< memif is already connected */
+  MEMIF_ERR_MODE,		/*!< mode mismatch */
+  MEMIF_ERR_SECRET,		/*!< secret mismatch */
+  MEMIF_ERR_NOSECRET,		/*!< secret required */
+  MEMIF_ERR_MAXREG,		/*!< max region limit reached */
+  MEMIF_ERR_MAXRING,		/*!< max ring limit reached */
+  MEMIF_ERR_NO_INTFD,		/*!< missing interrupt fd */
+  MEMIF_ERR_DISCONNECT,		/*!< disconenct received */
+  MEMIF_ERR_DISCONNECTED,	/*!< peer interface disconnected */
+  MEMIF_ERR_UNKNOWN_MSG,	/*!< unknown message type */
+} memif_err_t;
 
 /**
  * @defgroup MEMIF_FD_EVENT Types of events that need to be watched for specific fd.
@@ -94,7 +94,7 @@ typedef enum
 /** *brief Memif connection handle
     pointer of type void, pointing to internal structure
 */
-typedef void* memif_conn_handle_t;
+typedef void *memif_conn_handle_t;
 /**
  * @defgroup CALLBACKS Callback functions definitions
  *
@@ -117,7 +117,8 @@ typedef int (memif_control_fd_update_t) (int fd, uint8_t events);
     Informs user about connection status connected/disconnected.
     On connected -> start watching for events on interrupt fd (optional).
 */
-typedef int (memif_connection_update_t) (memif_conn_handle_t conn, void *private_ctx);
+typedef int (memif_connection_update_t) (memif_conn_handle_t conn,
+					 void *private_ctx);
 
 /** \brief Memif interrupt occured (callback function)
     @param conn - memif connection handle
@@ -125,8 +126,9 @@ typedef int (memif_connection_update_t) (memif_conn_handle_t conn, void *private
     @param qid - queue id on which interrupt occured
 
     Called when event is received on interrupt fd.
-*/ 
-typedef int (memif_interrupt_t) (memif_conn_handle_t conn, void *private_ctx, uint16_t qid);
+*/
+typedef int (memif_interrupt_t) (memif_conn_handle_t conn, void *private_ctx,
+				 uint16_t qid);
 /** @} */
 
 /**
@@ -150,26 +152,26 @@ typedef int (memif_interrupt_t) (memif_conn_handle_t conn, void *private_ctx, ui
 */
 typedef struct
 {
-    uint8_t *socket_filename; /*!< default = /run/vpp/memif.sock */
-    uint8_t secret[24]; /*!< optional (interface authentication) */
+  uint8_t *socket_filename;	/*!< default = /run/vpp/memif.sock */
+  uint8_t secret[24];		/*!< optional (interface authentication) */
 
-    uint8_t num_s2m_rings; /*!< default = 1 */
-    uint8_t num_m2s_rings; /*!< default = 1 */
-    uint16_t buffer_size; /*!< default = 2048 */
-    memif_log2_ring_size_t log2_ring_size; /*!< default = 10 (1024) */
-    uint8_t is_master;
+  uint8_t num_s2m_rings;	/*!< default = 1 */
+  uint8_t num_m2s_rings;	/*!< default = 1 */
+  uint16_t buffer_size;		/*!< default = 2048 */
+  memif_log2_ring_size_t log2_ring_size;	/*!< default = 10 (1024) */
+  uint8_t is_master;
 
-    memif_interface_id_t interface_id;
-    uint8_t interface_name[32];
-    uint8_t instance_name[32];
-    memif_interface_mode_t  mode:8;
+  memif_interface_id_t interface_id;
+  uint8_t interface_name[32];
+  uint8_t instance_name[32];
+  memif_interface_mode_t mode:8;
 } memif_conn_args_t;
 
 /*! memif receive mode */
 typedef enum
 {
-    MEMIF_RX_MODE_INTERRUPT = 0, /*!< interrupt mode */
-    MEMIF_RX_MODE_POLLING        /*!< polling mode */
+  MEMIF_RX_MODE_INTERRUPT = 0,	/*!< interrupt mode */
+  MEMIF_RX_MODE_POLLING		/*!< polling mode */
 } memif_rx_mode_t;
 
 /** \brief Memif buffer
@@ -180,10 +182,10 @@ typedef enum
 */
 typedef struct
 {
-    uint16_t desc_index;
-    uint32_t buffer_len;
-    uint32_t data_len;
-    void *data;
+  uint16_t desc_index;
+  uint32_t buffer_len;
+  uint32_t data_len;
+  void *data;
 } memif_buffer_t;
 /** @} */
 
@@ -200,10 +202,10 @@ typedef struct
 */
 typedef struct
 {
-    uint8_t qid;
-    uint32_t ring_size;
-    uint16_t buffer_size;
-    /* add ring information */
+  uint8_t qid;
+  uint32_t ring_size;
+  uint16_t buffer_size;
+  /* add ring information */
 } memif_queue_details_t;
 
 /** \brief Memif details
@@ -224,22 +226,22 @@ typedef struct
 */
 typedef struct
 {
-    uint8_t *if_name;
-    uint8_t *inst_name;
-    uint8_t *remote_if_name;
-    uint8_t *remote_inst_name;
+  uint8_t *if_name;
+  uint8_t *inst_name;
+  uint8_t *remote_if_name;
+  uint8_t *remote_inst_name;
 
-    uint32_t id;
-    uint8_t *secret; /* optional */
-    uint8_t role; /* 0 = master, 1 = slave */
-    uint8_t mode; /* 0 = ethernet, 1 = ip, 2 = punt/inject */
-    uint8_t *socket_filename;
-    uint8_t rx_queues_num;
-    uint8_t tx_queues_num;
-    memif_queue_details_t *rx_queues;
-    memif_queue_details_t *tx_queues;
+  uint32_t id;
+  uint8_t *secret;		/* optional */
+  uint8_t role;			/* 0 = master, 1 = slave */
+  uint8_t mode;			/* 0 = ethernet, 1 = ip, 2 = punt/inject */
+  uint8_t *socket_filename;
+  uint8_t rx_queues_num;
+  uint8_t tx_queues_num;
+  memif_queue_details_t *rx_queues;
+  memif_queue_details_t *tx_queues;
 
-    uint8_t link_up_down; /* 1 = up, 0 = down */
+  uint8_t link_up_down;		/* 1 = up, 0 = down */
 } memif_details_t;
 /** @} */
 
@@ -266,7 +268,8 @@ int memif_get_queue_efd (memif_conn_handle_t conn, uint16_t qid, int *fd);
 
     \return memif_err_t
 */
-int memif_set_rx_mode (memif_conn_handle_t conn, memif_rx_mode_t rx_mode, uint16_t qid);
+int memif_set_rx_mode (memif_conn_handle_t conn, memif_rx_mode_t rx_mode,
+		       uint16_t qid);
 
 /** \brief Memif strerror
     @param err_code - error code
@@ -285,8 +288,8 @@ char *memif_strerror (int err_code);
 
     \return memif_err_t
 */
-int memif_get_details (memif_conn_handle_t conn, memif_details_t *md,
-                       char *buf, ssize_t buflen);
+int memif_get_details (memif_conn_handle_t conn, memif_details_t * md,
+		       char *buf, ssize_t buflen);
 
 /** \brief Memif initialization
     @param on_control_fd_update - if control fd updates inform user to watch new fd
@@ -304,7 +307,8 @@ int memif_get_details (memif_conn_handle_t conn, memif_details_t *md,
 
     \return memif_err_t
 */
-int memif_init (memif_control_fd_update_t *on_control_fd_update, char *app_name);
+int memif_init (memif_control_fd_update_t * on_control_fd_update,
+		char *app_name);
 
 /** \brief Memif cleanup
 
@@ -338,10 +342,9 @@ int memif_cleanup ();
     \return memif_err_t
 */
 int memif_create (memif_conn_handle_t * conn, memif_conn_args_t * args,
-                  memif_connection_update_t * on_connect,
-                  memif_connection_update_t * on_disconnect,
-                  memif_interrupt_t * on_interrupt,
-                  void * private_ctx);
+		  memif_connection_update_t * on_connect,
+		  memif_connection_update_t * on_disconnect,
+		  memif_interrupt_t * on_interrupt, void *private_ctx);
 
 /** \brief Memif control file descriptor handler
     @param fd - file descriptor on which the event occured
@@ -372,7 +375,7 @@ int memif_control_fd_handler (int fd, uint8_t events);
 
     \return memif_err_t
 */
-int memif_delete (memif_conn_handle_t *conn);
+int memif_delete (memif_conn_handle_t * conn);
 
 /** \brief Memif buffer alloc
     @param conn - memif conenction handle
@@ -384,7 +387,8 @@ int memif_delete (memif_conn_handle_t *conn);
     \return memif_err_t
 */
 int memif_buffer_alloc (memif_conn_handle_t conn, uint16_t qid,
-                        memif_buffer_t *bufs, uint16_t count, uint16_t *count_out);
+			memif_buffer_t * bufs, uint16_t count,
+			uint16_t * count_out);
 
 /** \brief Memif buffer free
     @param conn - memif conenction handle
@@ -396,7 +400,8 @@ int memif_buffer_alloc (memif_conn_handle_t conn, uint16_t qid,
     \return memif_err_t
 */
 int memif_buffer_free (memif_conn_handle_t conn, uint16_t qid,
-                       memif_buffer_t *bufs, uint16_t count, uint16_t *count_out);
+		       memif_buffer_t * bufs, uint16_t count,
+		       uint16_t * count_out);
 
 /** \brief Memif transmit buffer burst
     @param conn - memif conenction handle
@@ -408,7 +413,7 @@ int memif_buffer_free (memif_conn_handle_t conn, uint16_t qid,
     \return memif_err_t
 */
 int memif_tx_burst (memif_conn_handle_t conn, uint16_t qid,
-                    memif_buffer_t *bufs, uint16_t count, uint16_t *tx);
+		    memif_buffer_t * bufs, uint16_t count, uint16_t * tx);
 
 /** \brief Memif receive buffer burst
     @param conn - memif conenction handle
@@ -420,7 +425,7 @@ int memif_tx_burst (memif_conn_handle_t conn, uint16_t qid,
     \return memif_err_t
 */
 int memif_rx_burst (memif_conn_handle_t conn, uint16_t qid,
-                    memif_buffer_t *bufs, uint16_t count, uint16_t *rx);
+		    memif_buffer_t * bufs, uint16_t count, uint16_t * rx);
 
 /** \brief Memif poll event
     @param timeout - timeout in seconds

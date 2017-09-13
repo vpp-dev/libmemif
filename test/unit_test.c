@@ -21,42 +21,43 @@
 int
 on_connect (memif_conn_handle_t conn, void *ctx)
 {
-    return 0;
+  return 0;
 }
 
 int
 on_disconnect (memif_conn_handle_t conn, void *ctx)
 {
-    return 0;
+  return 0;
 }
 
 int
 on_interrupt (memif_conn_handle_t conn, void *ctx, uint16_t qid)
 {
-    return 0;
+  return 0;
 }
 
 int
 control_fd_update (int fd, uint8_t events)
 {
-    return 0;
+  return 0;
 }
 
-int main (void)
+int
+main (void)
 {
-    int num_fail;
-    Suite *main, *socket;
-    SRunner *sr;
+  int num_fail;
+  Suite *main, *socket;
+  SRunner *sr;
 
-    main = main_suite ();
-    socket = socket_suite ();
+  main = main_suite ();
+  socket = socket_suite ();
 
-    sr = srunner_create (main);
+  sr = srunner_create (main);
 
-    srunner_add_suite (sr, socket);
+  srunner_add_suite (sr, socket);
 
-    srunner_run_all (sr, CK_VERBOSE);
-    num_fail = srunner_ntests_failed (sr);
-    srunner_free (sr);
-    return (num_fail == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
+  srunner_run_all (sr, CK_VERBOSE);
+  num_fail = srunner_ntests_failed (sr);
+  srunner_free (sr);
+  return (num_fail == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
 }

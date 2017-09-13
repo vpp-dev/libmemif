@@ -20,6 +20,6 @@
 
 #include <unit_test.h>
 
-Suite * socket_suite ();
+Suite *socket_suite ();
 
 #endif /* _SOCKET_TEST_H_ */

@@ -20,6 +20,6 @@
 
 #include <unit_test.h>
 
-Suite * main_suite ();
+Suite *main_suite ();
 
 #endif /* _MAIN_TEST_H_ */
