@@ -1406,20 +1406,20 @@ memif_buffer_alloc (memif_conn_handle_t conn, uint16_t qid,
 
 	  for (i = 0; i < (memif_min (chain_buf0, chain_buf1) - 1); i++)
 	    {
-	      ring->desc[s0 + i].flags |= MEMIF_DESC_FLAG_NEXT;
-	      ring->desc[s1 + i].flags |= MEMIF_DESC_FLAG_NEXT;
+	      ring->desc[(s0 + i) & mask].flags |= MEMIF_DESC_FLAG_NEXT;
+	      ring->desc[(s1 + i) & mask].flags |= MEMIF_DESC_FLAG_NEXT;
 	      DBG ("allocating chained buffers");
 	    }
 
 	  if (chain_buf0 > chain_buf1)
 	    {
 	      for (; i < (chain_buf0 - 1); i++)
-		ring->desc[s0 + i].flags |= MEMIF_DESC_FLAG_NEXT;
+		ring->desc[(s0 + i) & mask].flags |= MEMIF_DESC_FLAG_NEXT;
 	    }
 	  else
 	    {
 	      for (; i < (chain_buf1 - 1); i++)
-		ring->desc[s1 + i].flags |= MEMIF_DESC_FLAG_NEXT;
+		ring->desc[(s1 + i) & mask].flags |= MEMIF_DESC_FLAG_NEXT;
 	    }
 
 	  mq->alloc_bufs += chain_buf0 + chain_buf1;
@@ -1446,7 +1446,7 @@ memif_buffer_alloc (memif_conn_handle_t conn, uint16_t qid,
 
       for (i = 0; i < (chain_buf0 - 1); i++)
 	{
-	  ring->desc[s0 + i].flags |= MEMIF_DESC_FLAG_NEXT;
+	  ring->desc[(s0 + i) & mask].flags |= MEMIF_DESC_FLAG_NEXT;
 	  DBG ("allocating chained buffers");
 	}
 
@@ -1583,11 +1583,21 @@ memif_tx_burst (memif_conn_handle_t conn, uint16_t qid,
 
 	  for (i = 0; i < memif_min (chain_buf0, chain_buf1); i++)
 	    {
-	      ring->desc[b0->desc_index + i].length = b0->data_len;
-	      ring->desc[b1->desc_index + i].length = b1->data_len;
+	      ring->desc[(b0->desc_index + i) & mask].length = b0->data_len;
+	      ring->desc[(b1->desc_index + i) & mask].length = b1->data_len;
 #ifdef MEMIF_DBG_SHM
-	      print_bytes (b0->data, b0->data_len, DBG_TX_BUF);
-	      print_bytes (b1->data, b1->data_len, DBG_TX_BUF);
+	      print_bytes (b0->data +
+			   ring->desc[(b0->desc_index +
+				       i) & mask].buffer_length *
+			   (chain_buf0 - 1),
+			   ring->desc[(b0->desc_index +
+				       i) & mask].buffer_length, DBG_TX_BUF);
+	      print_bytes (b1->data +
+			   ring->desc[(b1->desc_index +
+				       i) & mask].buffer_length *
+			   (chain_buf1 - 1),
+			   ring->desc[(b1->desc_index +
+				       i) & mask].buffer_length, DBG_TX_BUF);
 #endif
 	    }
 
@@ -1595,9 +1605,16 @@ memif_tx_burst (memif_conn_handle_t conn, uint16_t qid,
 	    {
 	      for (; i < chain_buf0; i++)
 		{
-		  ring->desc[b0->desc_index + i].length = b0->data_len;
+		  ring->desc[(b0->desc_index + i) & mask].length =
+		    b0->data_len;
 #ifdef MEMIF_DBG_SHM
-		  print_bytes (b0->data, b0->data_len, DBG_TX_BUF);
+		  print_bytes (b0->data +
+			       ring->desc[(b0->desc_index +
+					   i) & mask].buffer_length *
+			       (chain_buf0 - 1),
+			       ring->desc[(b0->desc_index +
+					   i) & mask].buffer_length,
+			       DBG_TX_BUF);
 #endif
 		}
 	    }
@@ -1607,7 +1624,13 @@ memif_tx_burst (memif_conn_handle_t conn, uint16_t qid,
 		{
 		  ring->desc[b1->desc_index + i].length = b1->data_len;
 #ifdef MEMIF_DBG_SHM
-		  print_bytes (b1->data, b1->data_len, DBG_TX_BUF);
+		  print_bytes (b1->data +
+			       ring->desc[(b1->desc_index +
+					   i) & mask].buffer_length *
+			       (chain_buf1 - 1),
+			       ring->desc[(b1->desc_index +
+					   i) & mask].buffer_length,
+			       DBG_TX_BUF);
 #endif
 		}
 	    }
@@ -1632,9 +1655,13 @@ memif_tx_burst (memif_conn_handle_t conn, uint16_t qid,
 
       for (i = 0; i < chain_buf0; i++)
 	{
-	  ring->desc[b0->desc_index + i].length = b0->data_len;
+	  ring->desc[(b0->desc_index + i) & mask].length = b0->data_len;
 #ifdef MEMIF_DBG_SHM
-	  print_bytes (b0->data, b0->data_len, DBG_TX_BUF);
+	  print_bytes (b0->data +
+		       ring->desc[(b0->desc_index + i) & mask].buffer_length *
+		       (chain_buf0 - 1),
+		       ring->desc[(b0->desc_index + i) & mask].buffer_length,
+		       DBG_TX_BUF);
 #endif
 	}
 
@@ -1688,6 +1715,7 @@ memif_rx_burst (memif_conn_handle_t conn, uint16_t qid,
   memif_buffer_t *b0, *b1;
   uint16_t curr_buf = 0;
   *rx = 0;
+  int i;
 
   uint64_t b;
   ssize_t r = read (mq->int_fd, &b, sizeof (b));
@@ -1710,13 +1738,17 @@ memif_rx_burst (memif_conn_handle_t conn, uint16_t qid,
 	  b1 = (bufs + curr_buf + 1);
 
 	  b0->desc_index = mq->last_head;
+	  i = 0;
 	  do
 	    {
 	      b0->data = memif_get_buffer (conn, ring, mq->last_head);
 	      b0->data_len = ring->desc[mq->last_head].length;
 	      b0->buffer_len = ring->desc[mq->last_head].buffer_length;
 #ifdef MEMIF_DBG_SHM
-	      print_bytes (b0->data, b0->data_len, DBG_RX_BUF);
+	      print_bytes (b0->data +
+			   ring->desc[b0->desc_index].buffer_length * i++,
+			   ring->desc[b0->desc_index].buffer_length,
+			   DBG_TX_BUF);
 #endif
 	      mq->last_head = (mq->last_head + 1) & mask;
 	      ns--;
@@ -1725,13 +1757,17 @@ memif_rx_burst (memif_conn_handle_t conn, uint16_t qid,
 	  while (ring->desc[mq->last_head].flags & MEMIF_DESC_FLAG_NEXT);
 
 	  b1->desc_index = mq->last_head;
+	  i = 0;
 	  do
 	    {
 	      b1->data = memif_get_buffer (conn, ring, mq->last_head);
 	      b1->data_len = ring->desc[mq->last_head].length;
 	      b1->buffer_len = ring->desc[mq->last_head].buffer_length;
 #ifdef MEMIF_DBG_SHM
-	      print_bytes (b1->data, b1->data_len, DBG_RX_BUF);
+	      print_bytes (b1->data +
+			   ring->desc[b1->desc_index].buffer_length * i++,
+			   ring->desc[b1->desc_index].buffer_length,
+			   DBG_TX_BUF);
 #endif
 	      mq->last_head = (mq->last_head + 1) & mask;
 	      ns--;
@@ -1745,13 +1781,16 @@ memif_rx_burst (memif_conn_handle_t conn, uint16_t qid,
       b0 = (bufs + curr_buf);
 
       b0->desc_index = mq->last_head;
+      i = 0;
       do
 	{
 	  b0->data = memif_get_buffer (conn, ring, mq->last_head);
 	  b0->data_len = ring->desc[mq->last_head].length;
 	  b0->buffer_len = ring->desc[mq->last_head].buffer_length;
 #ifdef MEMIF_DBG_SHM
-	  print_bytes (b0->data, b0->data_len, DBG_RX_BUF);
+	  print_bytes (b0->data +
+		       ring->desc[b0->desc_index].buffer_length * i++,
+		       ring->desc[b0->desc_index].buffer_length, DBG_TX_BUF);
 #endif
 	  mq->last_head = (mq->last_head + 1) & mask;
 	  ns--;
