@@ -17,6 +17,24 @@ ACLOCAL_AMFLAGS = -I m4
 
 AM_CPPFLAGS = -g -DMEMIF_DBG -DICMP_DBG
 
+SRC_FILES = src/main.c          \
+            src/libmemif.h      \
+            src/memif.h         \
+            src/memif_private.h \
+            src/socket.h        \
+            src/socket.c        \
+            test/main_test.c    \
+            test/main_test.h    \
+            test/socket_test.c  \
+            test/socket_test.h  \
+            test/unit_test.c    \
+            test/unit_test.h    \
+            examples/icmp_responder/main.c  \
+            examples/icmp_responder/icmp_proto.c    \
+            examples/icmp_responder/icmp_proto.h    \
+            examples/icmp_responder-epoll/main.c    \
+            examples/icmp_responder-mt/main.c
+
 .PHONY: release
 release:
 	$(MAKE) AM_CPPFLAGS="-O3"
@@ -26,6 +44,12 @@ doc:
 	@echo Building doxygen documentation...
 	doxygen doxygen.conf
 	@echo Doxygen documentation built in docs directory.
+
+.PHONY: fixstyle
+fixstyle:
+	@echo Fixing code style...
+	indent $(SRC_FILES)
+	@echo Code style fixed!
 
 #
 # unit_test
