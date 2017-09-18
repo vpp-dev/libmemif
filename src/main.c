@@ -1706,7 +1706,7 @@ memif_tx_burst (memif_conn_handle_t conn, uint16_t qid,
 	  curr_buf += 2;
 	}
 
-      b0 = (bufs + *tx);
+      b0 = (bufs + curr_buf);
       chain_buf0 = b0->buffer_len / ring->desc[b0->desc_index].buffer_length;
       if ((b0->buffer_len % ring->desc[b0->desc_index].buffer_length) != 0)
 	chain_buf0++;
