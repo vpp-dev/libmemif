@@ -13,17 +13,77 @@
 
 AUTOMAKE_OPTIONS = foreign subdir-objects
 
+ACLOCAL_AMFLAGS = -I m4
+
+AM_CPPFLAGS = -g -DMEMIF_DBG -DICMP_DBG
+
+SRCS_C := $(shell find . -name "*.c" )
+SRCS_H := $(shell find . -name "*.h" )
+
+.PHONY: release
+release:
+	$(MAKE) AM_CPPFLAGS="-O3"
+
+.PHONY: doc
+doc:
+	@echo Building doxygen documentation...
+	doxygen doxygen.conf
+	@echo Doxygen documentation built in docs directory.
+
+.PHONY: fixstyle
+fixstyle:
+	@echo Fixing code style...
+	indent $(SRCS_C) $(SRCS_H)
+	@echo Code style fixed!
+
+#
+# unit_test
+#
+unit_test_SOURCES = test/unit_test.c \
+                    test/main_test.c \
+                    test/socket_test.c \
+                    src/main.c \
+                    src/socket.c
+# macro MEMIF_UNIT_TEST -> compile functions without static keyword
+# and declare them in header files, so they can be called from unit tests
+unit_test_CPPFLAGS = $(AM_CPPFLAGS) -Itest -Isrc -DMEMIF_UNIT_TEST -g $(CHECK_CFLAGS)
+unit_test_LDADD = $(CHECK_LIBS)
+
 #
 # main lib
 #
-libmemif_la_SOURCES = src/main.c
-lib_LTLIBRARIES = libmemif.la
-include_HEADERS = src/libmemif.h
+libmemif_la_SOURCES = src/main.c src/socket.c
+libmemif_la_CPPFLAGS = $(AM_CPPFLAGS) -Isrc
 
 #
 # ICMP responder example
 #
-icmp_responder_SOURCES = examples/icmp_responder/main.c
-icmp_responder_LDADD = libmemif.la
-icmp_responder_CPPFLAGS = $(AM_CPPFLAGS) -Isrc
-noinst_PROGRAMS = icmp_responder
+icmpr_SOURCES = examples/icmp_responder/main.c examples/icmp_responder/icmp_proto.c
+icmpr_LDADD = libmemif.la
+icmpr_CPPFLAGS = $(AM_CPPFLAGS) -Isrc -Iexamples/icmp_responder
+
+#
+# ICMP responder libmemif event polling example
+#
+icmpr_epoll_SOURCES = examples/icmp_responder-epoll/main.c \
+                    examples/icmp_responder/icmp_proto.c
+icmpr_epoll_LDADD = libmemif.la
+icmpr_epoll_CPPFLAGS = $(AM_CPPFLAGS) -Isrc -Iexamples/icmp_responder
+
+#
+# ICMP responder multi-thread example
+#
+icmpr_mt_SOURCES = examples/icmp_responder-mt/main.c \
+                      examples/icmp_responder/icmp_proto.c
+icmpr_mt_LDADD = libmemif.la -lpthread
+icmpr_mt_CPPFLAGS = $(AM_CPPFLAGS) -Isrc -Iexamples/icmp_responder
+
+noinst_PROGRAMS = icmpr icmpr-epoll icmpr-mt
+
+check_PROGRAMS = unit_test
+
+include_HEADERS = src/libmemif.h
+
+lib_LTLIBRARIES = libmemif.la
+
+TESTS = $(check_PROGRAMS)
